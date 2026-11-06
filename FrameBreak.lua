@@ -60,6 +60,7 @@ local state = {
     rapid = false,
     rapidCps = 30,
     rapidMult = 3,
+    killAll = false,
 
     cornerBoxes = true,
     skeletons = false,
@@ -823,6 +824,81 @@ if WeaponController and type(WeaponController.update) == "function" then
     end)
 end
 
+-- ============================================================
+-- KILL ALL (client-side gather in front of you)
+-- ============================================================
+local killAllSaved = {}
+
+local function gatherEnemies()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local cam = workspace.CurrentCamera
+    if not root or not cam then return end
+
+    local look = cam.CFrame.LookVector
+    look = Vector3.new(look.X, 0, look.Z)
+    if look.Magnitude < 0.1 then
+        look = root.CFrame.LookVector
+        look = Vector3.new(look.X, 0, look.Z)
+    end
+    look = look.Unit
+
+    local right = cam.CFrame.RightVector
+    right = Vector3.new(right.X, 0, right.Z)
+    if right.Magnitude < 0.1 then
+        right = root.CFrame.RightVector
+        right = Vector3.new(right.X, 0, right.Z)
+    end
+    right = right.Unit
+
+    local index = 0
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and not isTeammate(plr) then
+            local c = plr.Character
+            local hum = c and c:FindFirstChildOfClass("Humanoid")
+            local hrp = c and c:FindFirstChild("HumanoidRootPart")
+            if c and hum and hrp and hum.Health > 0 then
+                index = index + 1
+                local col = (index - 1) % 3
+                local row = math.floor((index - 1) / 3)
+                local pos = root.Position + look * (6 + row * 2.5) + right * ((col - 1) * 3)
+                pos = Vector3.new(pos.X, root.Position.Y + 1, pos.Z)
+                local goal = CFrame.new(pos, Vector3.new(root.Position.X, pos.Y, root.Position.Z))
+                pcall(function() c:PivotTo(goal) end)
+                if not killAllSaved[c] then
+                    killAllSaved[c] = { anchored = hrp.Anchored, platform = hum.PlatformStand }
+                end
+                pcall(function()
+                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    hrp.Anchored = true
+                    hum.PlatformStand = true
+                end)
+            end
+        end
+    end
+end
+
+local function restoreKillAll()
+    for c, saved in pairs(killAllSaved) do
+        if c and c.Parent then
+            local hum = c:FindFirstChildOfClass("Humanoid")
+            local hrp = c:FindFirstChild("HumanoidRootPart")
+            if hrp then pcall(function() hrp.Anchored = saved.anchored end) end
+            if hum then pcall(function() hum.PlatformStand = saved.platform end) end
+        end
+    end
+    table.clear(killAllSaved)
+end
+
+RunService.Heartbeat:Connect(function()
+    if state.killAll then
+        pcall(gatherEnemies)
+    elseif next(killAllSaved) then
+        pcall(restoreKillAll)
+    end
+end)
+
 RunService.RenderStepped:Connect(function()
     pcall(function()
         local radius = 0
@@ -1319,11 +1395,15 @@ makeToggle(rapidPanel, "rapid", "Enable rapidfire", 0)
 makeSlider(rapidPanel, "rapidMult", "Fire rate mult", 1, 20, 0.5, 32, "x%.1f")
 
 -- MISC
-local infoPanel = makePanel(miscTab, "INFO", 0, 0, 628, 200)
-makeInfo(infoPanel, 0, 120, "FRAMEBREAK [BETA] - Pulsar.One\n\nINS hides the menu.\nDo not fire admin/money remotes (AdminCommand, Net.SetWalkSpeed, Net.GodMode, AdminRemotes.GiveMoney) - they are honeypots.\n\nSilent aim / rapidfire may be logged by AimTraceSender / ClientGuard. Use at your own risk.")
+local killPanel = makePanel(miscTab, "KILL ALL", 0, 0, 628, 96)
+makeToggle(killPanel, "killAll", "Enable kill all", 0)
+makeInfo(killPanel, 32, 16, "Gathers every enemy in front of you while enabled.")
 
-local miscStatus = makePanel(miscTab, "STATUS", 0, 212, 628, 116)
-local miscStatusLabel = makeInfo(miscStatus, 0, 70, "players: 0 | target: none")
+local infoPanel = makePanel(miscTab, "INFO", 0, 108, 628, 100)
+makeInfo(infoPanel, 0, 50, "FRAMEBREAK [BETA] - Pulsar.One | INS hides the menu.\nDo not fire admin/money remotes - they are honeypots.")
+
+local miscStatus = makePanel(miscTab, "STATUS", 0, 220, 628, 108)
+local miscStatusLabel = makeInfo(miscStatus, 0, 50, "players: 0 | target: none")
 table.insert(statusLabels, miscStatusLabel)
 
 -- FOOTER
