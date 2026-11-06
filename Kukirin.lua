@@ -34,6 +34,7 @@ local state = {
     fly = false,
     desync = false,
     claims = false,
+    delivery = false,
     angle = 35,
     rideSpeed = 120,
     flySpeed = 80,
@@ -43,6 +44,9 @@ local state = {
     lastTrick = nil,
     pushed = 0,
     claimed = 0,
+    deliveryCash = 0,
+    deliveries = 0,
+    deliveryStatus = "",
 }
 
 local function remote(path)
@@ -57,6 +61,7 @@ end
 local WheelieState = remote({ "Character", "WheelieState" })
 local PoliceHit = remote({ "Character", "PoliceHit" })
 local TrickState = remote({ "Tricks", "TrickState" })
+local FoodDelivery = remote({ "FoodDelivery" })
 local claimDaily = remote({ "DailyRewards", "ClaimDailyReward" })
 local claimQuest = remote({ "Quests", "ClaimQuest" })
 local claimAch = remote({ "Achievements", "ClaimAchievementReward" })
@@ -609,7 +614,7 @@ local function applySpeed()
         end
     end
 
-    if (state.speed or state.uncap) and hum.SeatPart and not state.fly and not state.tricks then
+    if (state.speed or state.uncap) and hum.SeatPart and not state.fly and not state.tricks and not state.delivery then
         local seat = hum.SeatPart
         if seat and seat:IsA("VehicleSeat") then
             local throttle = seat.ThrottleFloat or seat.Throttle or 0
@@ -764,6 +769,102 @@ local function claimRewards()
         end
     end
 end
+
+-- ============================================================
+-- PIZZA DELIVERY FARM
+-- ============================================================
+local DELIVERY_NPC = Vector3.new(1424.7, 58.6, -607.8)
+
+local function teleportTo(pos)
+    if typeof(pos) ~= "Vector3" then return end
+    pcall(function() workspace:RequestStreamAroundAsync(pos) end)
+
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local seat = hum and hum.SeatPart
+    local ride = seat and seat:FindFirstAncestorOfClass("Model")
+
+    if ride then
+        local pivot = ride:GetPivot()
+        ride:PivotTo(CFrame.new(pos + Vector3.new(0, 5, 0)) * (pivot - pivot.Position))
+        local body = ride.PrimaryPart or seat
+        if body then
+            body.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            body.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+    elseif root then
+        root.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+        root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    end
+end
+
+local deliveryToken = {}
+getgenv().pulsarKukirinDeliveryToken = deliveryToken
+
+local function deliveryLoop()
+    while getgenv().pulsarKukirinDeliveryToken == deliveryToken do
+        if state.delivery and FoodDelivery and FoodDelivery:FindFirstChild("Start") and FoodDelivery:FindFirstChild("Deliver") then
+            local target = LocalPlayer:GetAttribute("DeliveryTarget")
+
+            if typeof(target) ~= "Vector3" then
+                state.deliveryStatus = "heading to delivery NPC"
+                teleportTo(DELIVERY_NPC)
+                task.wait(0.7)
+
+                local ok, started, msg = pcall(function()
+                    return FoodDelivery.Start:InvokeServer()
+                end)
+
+                if ok and started then
+                    state.deliveryStatus = "picked up an order"
+                else
+                    state.deliveryStatus = tostring(msg or "waiting for an order")
+                    task.wait(2.5)
+                end
+            else
+                state.deliveryStatus = "driving to customer"
+                teleportTo(target + Vector3.new(0, 0, 4))
+                task.wait(0.5)
+
+                local giveUp = os.clock() + 75
+                local lastTp = os.clock()
+
+                while state.delivery
+                    and getgenv().pulsarKukirinDeliveryToken == deliveryToken
+                    and LocalPlayer:GetAttribute("DeliveryTarget") == target
+                    and os.clock() < giveUp do
+                    if os.clock() - lastTp > 8 then
+                        teleportTo(target + Vector3.new(0, 0, 4))
+                        lastTp = os.clock()
+                    end
+
+                    local ok, done, pay, _, tip = pcall(function()
+                        return FoodDelivery.Deliver:InvokeServer()
+                    end)
+
+                    if ok and done then
+                        local earned = (tonumber(pay) or 0) + (tonumber(tip) or 0)
+                        state.deliveryCash = state.deliveryCash + earned
+                        state.deliveries = state.deliveries + 1
+                        state.deliveryStatus = string.format("delivered +$%d", earned)
+                        break
+                    end
+
+                    task.wait(1.5)
+                end
+            end
+        else
+            state.deliveryStatus = ""
+            task.wait(0.5)
+        end
+
+        task.wait(0.2)
+    end
+end
+
+task.spawn(deliveryLoop)
 
 -- ============================================================
 -- MATCHA-STYLE UI
@@ -941,8 +1042,8 @@ new("Frame", {
 
 local tabButtons = {}
 local tabFrames = {}
-local tabOrder = { "ride", "visuals", "movement", "misc" }
-local tabLabels = { "RIDE", "VISUALS", "MOVEMENT", "MISC" }
+local tabOrder = { "ride", "farm", "visuals", "movement", "misc" }
+local tabLabels = { "RIDE", "FARM", "VISUALS", "MOVEMENT", "MISC" }
 local activeTab = "ride"
 
 local content = new("Frame", {
@@ -1003,6 +1104,7 @@ for i, name in ipairs(tabOrder) do
 end
 
 local rideTab = makeTab("ride")
+local farmTab = makeTab("farm")
 local visualsTab = makeTab("visuals")
 local movementTab = makeTab("movement")
 local miscTab = makeTab("misc")
@@ -1307,6 +1409,7 @@ local wc = makePanel(rideTab, "AUTO WHEELIE", 0, 0, 308, 170)
 makeToggle(wc, "wheelie", "Enable", 0, function(on)
     if on then
         setToggle("tricks", false)
+        setToggle("delivery", false)
         stopSpin()
     end
 end)
@@ -1317,6 +1420,7 @@ local tc = makePanel(rideTab, "AUTO TRICKS", 320, 0, 308, 170)
 makeToggle(tc, "tricks", "Enable", 0, function(on)
     if on then
         setToggle("wheelie", false)
+        setToggle("delivery", false)
         stopWheelie()
     end
 end)
@@ -1326,6 +1430,28 @@ makeInfo(tc, 64, 54, "Jumps and spins for trick cash. Mode cycles above.")
 local rsPanel = makePanel(rideTab, "RIDE STATUS", 0, 182, 628, 120)
 local rideStatus = makeInfo(rsPanel, 0, 70, "waiting...")
 table.insert(statusLabels, rideStatus)
+
+-- FARM TAB
+local dp = makePanel(farmTab, "PIZZA DELIVERY", 0, 0, 308, 190)
+makeToggle(dp, "delivery", "Auto delivery", 0, function(on)
+    if on then
+        setToggle("wheelie", false)
+        setToggle("tricks", false)
+        setToggle("fly", false)
+        stopWheelie()
+        stopSpin()
+        if flyPos then stopFly() end
+    end
+end)
+makeButton(dp, "Teleport to delivery NPC", 34, function() teleportTo(DELIVERY_NPC) end)
+makeInfo(dp, 66, 62, "Starts an order, teleports to the customer and hands over the pizza.")
+
+local dstat = makePanel(farmTab, "DELIVERY STATUS", 320, 0, 308, 190)
+local deliveryStatusLabel = makeInfo(dstat, 0, 46, "idle")
+local deliveryStatsLabel = makeInfo(dstat, 50, 40, "deliveries: 0 · cash: $0")
+
+local dnote = makePanel(farmTab, "NOTES", 0, 202, 628, 110)
+makeInfo(dnote, 0, 60, "The server accepts the drop after the trip time (~30s). Keep tricks / fly / wheelie off while farming.")
 
 -- VISUALS TAB
 local pe = makePanel(visualsTab, "POLICE ESP", 0, 0, 308, 170)
@@ -1351,6 +1477,7 @@ makeToggle(fl, "fly", "CFrame fly", 0, function(on)
     if on then
         setToggle("wheelie", false)
         setToggle("tricks", false)
+        setToggle("delivery", false)
         stopWheelie()
         stopSpin()
     end
@@ -1419,15 +1546,24 @@ local footRight = new("TextLabel", {
 
 local function refreshStatus()
     local text = string.format(
-        "ride: %s   ·   cash: $%d   ·   last: %s",
+        "ride: %s   ·   tricks $%d   ·   pizza $%d   ·   last: %s",
         state.ride and state.ride.Name or "none",
         state.cash,
+        state.deliveryCash,
         state.lastTrick or "none"
     )
     for _, label in ipairs(statusLabels) do
         if label.Parent then label.Text = text end
     end
-    footRight.Text = string.format("pushed %d · claimed %d · F6", state.pushed, state.claimed)
+    footRight.Text = string.format("pushed %d · delivered %d · F6", state.pushed, state.deliveries)
+
+    if deliveryStatusLabel then
+        deliveryStatusLabel.Text = state.deliveryStatus ~= "" and state.deliveryStatus
+            or (state.delivery and "starting..." or "idle")
+    end
+    if deliveryStatsLabel then
+        deliveryStatsLabel.Text = string.format("deliveries: %d · cash: $%d", state.deliveries, state.deliveryCash)
+    end
 end
 
 -- ============================================================
