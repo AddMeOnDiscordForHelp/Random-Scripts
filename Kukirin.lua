@@ -38,7 +38,7 @@ local state = {
     angle = 35,
     rideSpeed = 120,
     flySpeed = 80,
-    trickMode = "Random",
+    trickMode = "Spin",
     ride = nil,
     cash = 0,
     lastTrick = nil,
@@ -275,16 +275,8 @@ end
 local function chooseTrickMode()
     local mode = state.trickMode
     if mode == "Random" then
-        local roll = math.random()
-        if roll < 0.50 then
-            mode = "Spin"
-        elseif roll < 0.70 then
-            mode = "Backflip"
-        elseif roll < 0.85 then
-            mode = "Frontflip"
-        else
-            mode = "180"
-        end
+        -- keep random mode on the Y axis so the rider is not thrown off with flips
+        mode = (math.random() < 0.75) and "Spin" or "180"
     end
     return mode
 end
@@ -335,8 +327,8 @@ local function updateSpin(dt)
         return
     end
 
-    local char, hum, _, body, vehicle = getSpinParts()
-    if not char then
+    local char, hum, _, body, vehicle, seat = getSpinParts()
+    if not char or not seat then
         if spin.phase ~= "Idle" then
             releaseSpin(nil, spin.currentBody)
             resetSpin()
@@ -474,7 +466,16 @@ local function pushPolice()
     end
 end
 
-local policeHighlights, policeTags = {}, {}
+local policeHighlights, policeTags, policeBoxes = {}, {}, {}
+
+local oldEspGui = playerGui:FindFirstChild("PulsarKukirinESP")
+if oldEspGui then oldEspGui:Destroy() end
+local espGui = Instance.new("ScreenGui")
+espGui.Name = "PulsarKukirinESP"
+espGui.ResetOnSpawn = false
+espGui.IgnoreGuiInset = true
+espGui.DisplayOrder = 998
+espGui.Parent = playerGui
 
 local function clearPoliceEsp()
     for model, h in pairs(policeHighlights) do
@@ -484,6 +485,10 @@ local function clearPoliceEsp()
     for model, t in pairs(policeTags) do
         pcall(function() t:Destroy() end)
         policeTags[model] = nil
+    end
+    for model, b in pairs(policeBoxes) do
+        pcall(function() b:Destroy() end)
+        policeBoxes[model] = nil
     end
 end
 
@@ -540,6 +545,22 @@ local function updatePoliceEsp()
 
                 policeTags[model] = tag
             end
+
+            local box = policeBoxes[model]
+            if not box or not box.Parent then
+                box = Instance.new("Frame")
+                box.Name = "PulsarPoliceBox"
+                box.BackgroundTransparency = 1
+                box.BorderSizePixel = 0
+                box.Visible = false
+                box.ZIndex = 5
+                local boxStroke = Instance.new("UIStroke")
+                boxStroke.Color = Color3.fromRGB(255, 60, 60)
+                boxStroke.Thickness = 1.5
+                boxStroke.Parent = box
+                box.Parent = espGui
+                policeBoxes[model] = box
+            end
         end
     end
 
@@ -553,6 +574,68 @@ local function updatePoliceEsp()
         if not live[model] then
             pcall(function() t:Destroy() end)
             policeTags[model] = nil
+        end
+    end
+    for model, b in pairs(policeBoxes) do
+        if not live[model] then
+            pcall(function() b:Destroy() end)
+            policeBoxes[model] = nil
+        end
+    end
+end
+
+local function updatePoliceBoxes()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local vp = cam.ViewportSize
+
+    for model, box in pairs(policeBoxes) do
+        if not model.Parent then
+            box.Visible = false
+        else
+            local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
+            if not ok or typeof(cf) ~= "CFrame" or typeof(size) ~= "Vector3" or size.Magnitude < 0.1 then
+                box.Visible = false
+            else
+                local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
+                local corners = {
+                    cf * Vector3.new(-hx, -hy, -hz),
+                    cf * Vector3.new(-hx, -hy, hz),
+                    cf * Vector3.new(-hx, hy, -hz),
+                    cf * Vector3.new(-hx, hy, hz),
+                    cf * Vector3.new(hx, -hy, -hz),
+                    cf * Vector3.new(hx, -hy, hz),
+                    cf * Vector3.new(hx, hy, -hz),
+                    cf * Vector3.new(hx, hy, hz),
+                }
+
+                local minX, minY = math.huge, math.huge
+                local maxX, maxY = -math.huge, -math.huge
+                local any = false
+
+                for _, world in ipairs(corners) do
+                    local screen = cam:WorldToViewportPoint(world)
+                    if screen.Z > 0 then
+                        any = true
+                        minX = math.min(minX, screen.X)
+                        minY = math.min(minY, screen.Y)
+                        maxX = math.max(maxX, screen.X)
+                        maxY = math.max(maxY, screen.Y)
+                    end
+                end
+
+                if any then
+                    minX = math.clamp(minX, -100, vp.X + 100)
+                    minY = math.clamp(minY, -100, vp.Y + 100)
+                    maxX = math.clamp(maxX, -100, vp.X + 100)
+                    maxY = math.clamp(maxY, -100, vp.Y + 100)
+                    box.Position = UDim2.fromOffset(math.floor(minX), math.floor(minY))
+                    box.Size = UDim2.fromOffset(math.max(2, math.floor(maxX - minX)), math.max(2, math.floor(maxY - minY)))
+                    box.Visible = true
+                else
+                    box.Visible = false
+                end
+            end
         end
     end
 end
@@ -595,7 +678,7 @@ end
 -- ============================================================
 local baseWalkSpeed = nil
 
-local function applySpeed()
+local function applySpeed(dt)
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
@@ -625,7 +708,12 @@ local function applySpeed()
                 local look = seat.CFrame.LookVector
                 local flat = Vector3.new(look.X, 0, look.Z)
                 if flat.Magnitude > 0.1 then
-                    body.AssemblyLinearVelocity = flat.Unit * target + Vector3.new(0, v.Y, 0)
+                    if state.uncap then
+                        body.AssemblyLinearVelocity = flat.Unit * target + Vector3.new(0, v.Y, 0)
+                    else
+                        local push = state.rideSpeed * 0.5
+                        body.AssemblyLinearVelocity = body.AssemblyLinearVelocity + flat.Unit * push * dt
+                    end
                 end
             end
         end
@@ -1425,7 +1513,7 @@ makeToggle(tc, "tricks", "Enable", 0, function(on)
     end
 end)
 makeModeButton(tc, 32)
-makeInfo(tc, 64, 54, "Jumps and spins for trick cash. Mode cycles above.")
+local trickInfo = makeInfo(tc, 64, 54, "Jumps and spins for trick cash. Mode: Spin")
 
 local rsPanel = makePanel(rideTab, "RIDE STATUS", 0, 182, 628, 120)
 local rideStatus = makeInfo(rsPanel, 0, 70, "waiting...")
@@ -1455,7 +1543,9 @@ makeInfo(dnote, 0, 60, "The server accepts the drop after the trip time (~30s). 
 
 -- VISUALS TAB
 local pe = makePanel(visualsTab, "POLICE ESP", 0, 0, 308, 170)
-makeToggle(pe, "policeEsp", "Enable", 0)
+makeToggle(pe, "policeEsp", "Enable", 0, function(on)
+    if on then updatePoliceEsp() else clearPoliceEsp() end
+end)
 makeInfo(pe, 34, 80, "Red highlight + POLICE tag on Workspace.PoliceNPCs.")
 
 local pp = makePanel(visualsTab, "POLICE PUSH", 320, 0, 308, 170)
@@ -1564,6 +1654,15 @@ local function refreshStatus()
     if deliveryStatsLabel then
         deliveryStatsLabel.Text = string.format("deliveries: %d · cash: $%d", state.deliveries, state.deliveryCash)
     end
+    if trickInfo then
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if state.tricks and not (hum and hum.SeatPart) then
+            trickInfo.Text = "Sit on a ride first. Tricks need a VehicleSeat."
+        else
+            trickInfo.Text = string.format("Jump/spin farm. Mode: %s", state.trickMode)
+        end
+    end
 end
 
 -- ============================================================
@@ -1640,7 +1739,7 @@ RunService.Heartbeat:Connect(function(dt)
         end
 
         -- speed
-        applySpeed()
+        applySpeed(dt)
 
         -- desync
         if state.desync then
@@ -1666,6 +1765,7 @@ end)
 
 RunService.RenderStepped:Connect(function(dt)
     if state.fly then pcall(updateFly, dt) end
+    if state.policeEsp then pcall(updatePoliceBoxes) end
 end)
 
 UIS.InputBegan:Connect(function(input, gpe)
