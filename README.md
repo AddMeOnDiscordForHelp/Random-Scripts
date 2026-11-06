@@ -8,15 +8,21 @@
 loadstring(request({Url='https://raw.githubusercontent.com/AddMeOnDiscordForHelp/Random-Scripts/main/Kukirin.lua?v='..os.time(),Method='GET'}).Body)();
 ```
 
-- **Auto wheelie** - locks the chassis pitch at the slider angle (works on the DriveSeat, disables upright assists). Freeze position pins it.
-- **Auto tricks** - hops and performs backflip / frontflip / 180 / 360 spins automatically. Tracks cash from `Tricks.TrickState`.
-- **Police ESP** - red highlight + POLICE tag on `Workspace.PoliceNPCs`.
-- **Police push** - launches police cars away, disables their touch/collision, blocks `PoliceHit`, auto get-up.
-- **Speed boost / uncap** - walk speed + ride velocity, uncap pushes the ride much higher.
-- **Desync** - CameraModule / first-person camera sees a rotated root.
-- **CFrame fly** - camera-relative CFrame vfly with its own speed slider.
-- **Auto claim** - daily / quest / achievement rewards.
-- `F6` hides the panel; drag the title bar to move it.
+### UI
+Matcha-style Luau menu: dark chrome, top tabs, child panels with accent titlebars, pill toggles, drag header, Pulsar.One blue branding. `F6` / `Insert` hides it.
+
+### Features
+- **Auto Wheelie** - AlignOrientation on the DriveSeat, adjustable angle, freeze position.
+- **Auto Tricks** - proven jump/spin cycle with Random / Spin / Backflip / Frontflip / 180 modes.
+- **Police ESP** - red highlight + POLICE tag.
+- **Police Push** - launches police cars away, disables touch/collision, blocks `PoliceHit`.
+- **Speed Boost / Uncap** - walk speed + ride velocity.
+- **CFrame Fly** - camera-relative CFrame vfly.
+- **Desync** - CameraModule / FirstPersonCamera sees a rotated root.
+- **Auto Claim** - daily / quest / achievement.
+
+### Tabs
+`RIDE`, `VISUALS`, `MOVEMENT`, `MISC`.
 
 ## Tools
 
