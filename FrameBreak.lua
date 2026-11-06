@@ -247,7 +247,7 @@ local function makeBox()
     hpBack.Position = UDim2.new(0, 2, 0, -6)
     hpBack.Size = UDim2.new(1, -4, 0, 4)
     hpBack.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
-    hpBack.BackgroundColorTransparency = 0.35
+    hpBack.BackgroundTransparency = 0.35
     hpBack.BorderSizePixel = 0
     hpBack.Parent = box
     local foo = Instance.new("UICorner", hpBack); foo.CornerRadius = UDim.new(1, 0)
@@ -609,7 +609,7 @@ hudHpBack.Name = "HpBack"
 hudHpBack.Position = UDim2.fromOffset(12, 48)
 hudHpBack.Size = UDim2.new(1, -24, 0, 10)
 hudHpBack.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
-hudHpBack.BackgroundColorTransparency = 0.2
+hudHpBack.BackgroundTransparency = 0.2
 hudHpBack.BorderSizePixel = 0
 hudHpBack.Parent = hudFrame
 local hdfc = Instance.new("UICorner", hudHpBack); hdfc.CornerRadius = UDim.new(1, 0)
