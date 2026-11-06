@@ -48,6 +48,8 @@ local state = {
     deliveries = 0,
     deliveryStatus = "",
     deliveryCycleStart = 0,
+    deliveryRide = nil,
+    deliverySeat = nil,
 }
 
 local function remote(path)
@@ -184,11 +186,11 @@ end
 -- ============================================================
 -- AUTO TRICKS (jump + spin / flip cycle)
 -- ============================================================
-local SPIN_JUMP_VELOCITY = 15
-local SPIN_ASCEND_TIME = 0.35
-local SPIN_DESCENT_SPEED = -150
-local SPIN_REPEAT_DELAY = 0.25
-local SPIN_MAX_DESCENT_TIME = 1.5
+local SPIN_JUMP_VELOCITY = 22
+local SPIN_ASCEND_TIME = 0.15
+local SPIN_DESCENT_SPEED = -300
+local SPIN_REPEAT_DELAY = 0.05
+local SPIN_MAX_DESCENT_TIME = 0.8
 local SPIN_GROUND_CHECK_DISTANCE = 3.5
 
 local spin = {
@@ -331,17 +333,17 @@ local function startSpinCycle()
     spin.baseYaw = select(2, body.CFrame:ToOrientation())
 
     if spin.mode == "Spin" then
-        spin.targetAngle = math.rad(3000)
-        spin.rate = math.rad(3600)
+        spin.targetAngle = math.rad(7200)
+        spin.rate = math.rad(10800)
     elseif spin.mode == "Backflip" then
         spin.targetAngle = math.rad(360)
-        spin.rate = math.rad(720)
+        spin.rate = math.rad(1440)
     elseif spin.mode == "Frontflip" then
         spin.targetAngle = math.rad(-360)
-        spin.rate = math.rad(-720)
+        spin.rate = math.rad(-1440)
     else
         spin.targetAngle = math.rad(180)
-        spin.rate = math.rad(900)
+        spin.rate = math.rad(1800)
     end
 
     setSpinOrientation(body, 0)
@@ -937,6 +939,8 @@ local function tweenTo(pos, duration)
     local ride = seat and seat:FindFirstAncestorOfClass("Model")
 
     if ride then
+        state.deliveryRide = ride
+        state.deliverySeat = seat
         local body = ride.PrimaryPart or seat
         local pivot = ride:GetPivot()
         local goal = CFrame.new(pos + Vector3.new(0, 5, 0)) * (pivot - pivot.Position)
@@ -985,12 +989,74 @@ local function tweenTo(pos, duration)
     end
 end
 
+local function dismountForDelivery()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not hum or not root or not hum.SeatPart then return end
+
+    state.deliverySeat = hum.SeatPart
+    state.deliveryRide = hum.SeatPart:FindFirstAncestorOfClass("Model")
+    state.deliveryStatus = "jumping off at customer"
+
+    pcall(function() hum.Sit = false end)
+    task.wait(0.12)
+    if hum.SeatPart then
+        root.CFrame = hum.SeatPart.CFrame * CFrame.new(0, 4, 6)
+        pcall(function() hum.Sit = false end)
+        task.wait(0.1)
+    end
+    pcall(function() hum.Jump = true end)
+    if root.Parent then
+        root.AssemblyLinearVelocity = root.AssemblyLinearVelocity + Vector3.new(0, 28, 0)
+    end
+    task.wait(0.35)
+end
+
+local function remountDeliveryRide()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not hum or not root or hum.SeatPart then return end
+
+    local ride = state.deliveryRide
+    local seat = state.deliverySeat
+    if (not seat or not seat.Parent) and ride and ride.Parent then
+        seat = ride:FindFirstChild("DriveSeat")
+    end
+    if not seat or not seat.Parent then return end
+
+    state.deliveryStatus = "jumping back on"
+    pcall(function()
+        if hum:GetState() == Enum.HumanoidStateType.Physics then
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end)
+
+    root.CFrame = seat.CFrame * CFrame.new(0, 3, 0)
+    task.wait(0.1)
+    pcall(function() seat:Sit(hum) end)
+    task.wait(0.2)
+
+    if not hum.SeatPart then
+        pcall(function() hum.Sit = true end)
+        task.wait(0.2)
+    end
+
+    state.deliverySeat = seat
+end
+
 local function deliveryLoop()
     while getgenv().pulsarKukirinDeliveryToken == deliveryToken do
         if state.delivery and FoodDelivery and FoodDelivery:FindFirstChild("Start") and FoodDelivery:FindFirstChild("Deliver") then
             local target = LocalPlayer:GetAttribute("DeliveryTarget")
 
             if typeof(target) ~= "Vector3" then
+                local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if state.deliveryRide and not (hum and hum.SeatPart) then
+                    remountDeliveryRide()
+                end
                 state.deliveryStatus = "tweening to delivery NPC"
                 tweenTo(DELIVERY_NPC, 2.5)
                 task.wait(0.2)
@@ -1017,10 +1083,11 @@ local function deliveryLoop()
                 end
 
                 local elapsed = os.clock() - cycleStart
-                local travel = math.clamp(17.5 - elapsed, 2, 17.5)
+                local travel = math.clamp(16.5 - elapsed, 2, 16.5)
 
                 state.deliveryStatus = "tweening to customer"
                 tweenTo(target + Vector3.new(0, 0, 4), travel)
+                dismountForDelivery()
                 state.deliveryStatus = "waiting for drop-off"
 
                 local targetTime = cycleStart + DELIVERY_CYCLE
@@ -1041,6 +1108,7 @@ local function deliveryLoop()
                         state.deliveries = state.deliveries + 1
                         state.deliveryStatus = string.format("delivered +$%d", earned)
                         state.deliveryCycleStart = 0
+                        remountDeliveryRide()
                         break
                     end
 
@@ -1619,7 +1687,15 @@ end)
 makeSlider(wc, "angle", "Angle", -80, 80, 1, 32, "%.0f deg")
 makeToggle(wc, "freeze", "Freeze position", 76)
 
-local tc = makePanel(rideTab, "AUTO TRICKS", 320, 0, 308, 170)
+local sl = makePanel(rideTab, "SEAT LOCK", 320, 0, 308, 170)
+makeInfo(sl, 0, 110, "A WeldConstraint pins your HumanoidRootPart to the seat while wheelie or tricks run, so the vehicle cannot fling you off. It is removed when both are off.")
+
+local rsPanel = makePanel(rideTab, "RIDE STATUS", 0, 182, 628, 120)
+local rideStatus = makeInfo(rsPanel, 0, 70, "waiting...")
+table.insert(statusLabels, rideStatus)
+
+-- FARM TAB
+local tc = makePanel(farmTab, "AUTO TRICKS", 0, 0, 308, 170)
 makeToggle(tc, "tricks", "Enable", 0, function(on)
     if on then
         setToggle("wheelie", false)
@@ -1630,12 +1706,7 @@ end)
 makeModeButton(tc, 32)
 local trickInfo = makeInfo(tc, 64, 54, "Jumps and spins for trick cash. Mode: Spin")
 
-local rsPanel = makePanel(rideTab, "RIDE STATUS", 0, 182, 628, 120)
-local rideStatus = makeInfo(rsPanel, 0, 70, "waiting...")
-table.insert(statusLabels, rideStatus)
-
--- FARM TAB
-local dp = makePanel(farmTab, "PIZZA DELIVERY", 0, 0, 308, 190)
+local dp = makePanel(farmTab, "PIZZA DELIVERY", 320, 0, 308, 170)
 makeToggle(dp, "delivery", "Auto delivery", 0, function(on)
     if on then
         setToggle("wheelie", false)
@@ -1647,14 +1718,14 @@ makeToggle(dp, "delivery", "Auto delivery", 0, function(on)
     end
 end)
 makeButton(dp, "Teleport to delivery NPC", 34, function() teleportTo(DELIVERY_NPC) end)
-makeInfo(dp, 66, 62, "Starts an order, teleports to the customer and hands over the pizza.")
+makeInfo(dp, 66, 52, "Starts an order, jumps off at the customer, delivers, then remounts for the return.")
 
-local dstat = makePanel(farmTab, "DELIVERY STATUS", 320, 0, 308, 190)
-local deliveryStatusLabel = makeInfo(dstat, 0, 46, "idle")
-local deliveryStatsLabel = makeInfo(dstat, 50, 40, "deliveries: 0 · cash: $0")
+local dstat = makePanel(farmTab, "DELIVERY STATUS", 0, 182, 308, 120)
+local deliveryStatusLabel = makeInfo(dstat, 0, 40, "idle")
+local deliveryStatsLabel = makeInfo(dstat, 44, 30, "deliveries: 0 · cash: $0")
 
-local dnote = makePanel(farmTab, "NOTES", 0, 202, 628, 110)
-makeInfo(dnote, 0, 60, "The server accepts the drop after the trip time (~30s). Keep tricks / fly / wheelie off while farming.")
+local dnote = makePanel(farmTab, "NOTES", 320, 182, 308, 120)
+makeInfo(dnote, 0, 70, "20s tweened cycle. Jumps off at the customer and back on for the return. Server payout can still take ~30s.")
 
 -- VISUALS TAB
 local pe = makePanel(visualsTab, "POLICE ESP", 0, 0, 308, 170)
