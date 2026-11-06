@@ -39,6 +39,7 @@ local state = {
     rideSpeed = 120,
     flySpeed = 80,
     trickMode = "Spin",
+    trickSpeed = 1,
     ride = nil,
     cash = 0,
     lastTrick = nil,
@@ -186,11 +187,11 @@ end
 -- ============================================================
 -- AUTO TRICKS (jump + spin / flip cycle)
 -- ============================================================
-local SPIN_JUMP_VELOCITY = 22
-local SPIN_ASCEND_TIME = 0.15
-local SPIN_DESCENT_SPEED = -300
-local SPIN_REPEAT_DELAY = 0.05
-local SPIN_MAX_DESCENT_TIME = 0.8
+local SPIN_JUMP_VELOCITY = 18
+local SPIN_ASCEND_TIME = 0.3
+local SPIN_DESCENT_SPEED = -160
+local SPIN_REPEAT_DELAY = 0.2
+local SPIN_MAX_DESCENT_TIME = 1.2
 local SPIN_GROUND_CHECK_DISTANCE = 3.5
 
 local spin = {
@@ -208,6 +209,7 @@ local spin = {
     savedAutoRotate = true,
     savedPlatformStand = false,
     cycleSeated = false,
+    seat = nil,
 }
 
 local function setSpinPhase(name)
@@ -224,6 +226,9 @@ local function getSpinParts()
     local seat = hum.SeatPart
     if not seat and seatLock and seatLock.Part1 and seatLock.Part1.Parent then
         seat = seatLock.Part1
+    end
+    if not seat and spin.seat and spin.seat.Parent then
+        seat = spin.seat
     end
     local body = root
     local vehicle = nil
@@ -297,6 +302,7 @@ end
 local function resetSpin()
     spin.phase = "Idle"
     spin.totalAngle = 0
+    spin.seat = nil
     removeSpinAligner()
 end
 
@@ -331,19 +337,20 @@ local function startSpinCycle()
     spin.mode = chooseTrickMode()
     spin.totalAngle = 0
     spin.baseYaw = select(2, body.CFrame:ToOrientation())
+    spin.seat = seat
 
     if spin.mode == "Spin" then
-        spin.targetAngle = math.rad(7200)
-        spin.rate = math.rad(10800)
+        spin.targetAngle = math.rad(1440)
+        spin.rate = math.rad(1440) * (state.trickSpeed or 1)
     elseif spin.mode == "Backflip" then
         spin.targetAngle = math.rad(360)
-        spin.rate = math.rad(1440)
+        spin.rate = math.rad(720) * (state.trickSpeed or 1)
     elseif spin.mode == "Frontflip" then
         spin.targetAngle = math.rad(-360)
-        spin.rate = math.rad(-1440)
+        spin.rate = math.rad(-720) * (state.trickSpeed or 1)
     else
         spin.targetAngle = math.rad(180)
-        spin.rate = math.rad(1800)
+        spin.rate = math.rad(720) * (state.trickSpeed or 1)
     end
 
     setSpinOrientation(body, 0)
@@ -1704,7 +1711,8 @@ makeToggle(tc, "tricks", "Enable", 0, function(on)
     end
 end)
 makeModeButton(tc, 32)
-local trickInfo = makeInfo(tc, 64, 54, "Jumps and spins for trick cash. Mode: Spin")
+makeSlider(tc, "trickSpeed", "Spin speed", 0.4, 2.0, 0.1, 64, "x%.1f")
+local trickInfo = makeInfo(tc, 104, 20, "Mode: Spin")
 
 local dp = makePanel(farmTab, "PIZZA DELIVERY", 320, 0, 308, 170)
 makeToggle(dp, "delivery", "Auto delivery", 0, function(on)
@@ -1844,9 +1852,9 @@ local function refreshStatus()
         local char = LocalPlayer.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if state.tricks and not (hum and hum.SeatPart) then
-            trickInfo.Text = "Sit on a ride first. Tricks need a VehicleSeat."
+            trickInfo.Text = "Sit on a ride first."
         else
-            trickInfo.Text = string.format("Jump/spin farm. Mode: %s", state.trickMode)
+            trickInfo.Text = string.format("Mode: %s", state.trickMode)
         end
     end
 end
@@ -1884,10 +1892,16 @@ RunService.Heartbeat:Connect(function(dt)
         if not rideSeat and seatLock and seatLock.Part1 and seatLock.Part1.Parent then
             rideSeat = seatLock.Part1
         end
+        if not rideSeat and spin.seat and spin.seat.Parent then
+            rideSeat = spin.seat
+        end
         if (state.wheelie or state.tricks) and rideSeat and not state.fly then
             lockSeat(rideSeat)
         else
             unlockSeat()
+        end
+        if (state.wheelie or state.tricks) and hum and hum:GetState() == Enum.HumanoidStateType.Physics then
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
         end
 
         -- wheelie
