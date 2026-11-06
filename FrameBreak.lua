@@ -59,6 +59,7 @@ local state = {
 
     rapid = false,
     rapidCps = 30,
+    rapidMult = 3,
 
     cornerBoxes = true,
     skeletons = false,
@@ -812,16 +813,46 @@ local function fireClick()
     end
 end
 
-task.spawn(function()
-    while true do
-        if state.rapid and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-            fireClick()
-            task.wait(1 / math.max(state.rapidCps, 1))
-        else
-            task.wait(0.03)
+-- rapidfire via WeaponController.update dt scale (true rate multiplier, no mouse spam)
+local rapidControllers = LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Controllers")
+local WeaponController = nil
+pcall(function()
+    local wc = rapidControllers:FindFirstChild("WeaponController")
+    if wc then
+        local ok, module = pcall(require, wc)
+        if ok and type(module) == "table" then
+            WeaponController = module
         end
     end
 end)
+
+local rapidPrev = getgenv().pulsarFBRapid
+if rapidPrev and typeof(rapidPrev) == "table" then
+    pcall(function()
+        if rapidPrev.owner == WeaponController then
+            WeaponController.update = rapidPrev.original
+        end
+    end)
+end
+getgenv().pulsarFBRapid = nil
+
+if WeaponController and type(WeaponController.update) == "function" then
+    local oldUpdate = WeaponController.update
+    local newUpdate = newcclosure(function(dt)
+        local mult = 1
+        if state.rapid and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+            mult = math.max(state.rapidMult or 3, 1)
+        end
+        if mult ~= 1 then
+            dt = dt * mult
+        end
+        return oldUpdate(dt)
+    end)
+    pcall(function()
+        WeaponController.update = newUpdate
+        getgenv().pulsarFBRapid = { owner = WeaponController, original = oldUpdate }
+    end)
+end
 
 RunService.RenderStepped:Connect(function()
     pcall(function()
@@ -1316,7 +1347,7 @@ makeInfo(silentPanel, 104, 50, "Hooks workspace:Raycast while firing. Bullet TP 
 
 local rapidPanel = makePanel(combatTab, "RAPIDFIRE", 0, 212, 628, 116)
 makeToggle(rapidPanel, "rapid", "Enable rapidfire", 0)
-makeSlider(rapidPanel, "rapidCps", "CPS", 5, 100, 1, 32, "%.0f")
+makeSlider(rapidPanel, "rapidMult", "Fire rate mult", 1, 20, 0.5, 32, "x%.1f")
 
 -- MISC
 local infoPanel = makePanel(miscTab, "INFO", 0, 0, 628, 200)
