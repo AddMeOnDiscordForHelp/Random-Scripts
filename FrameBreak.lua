@@ -40,12 +40,12 @@ local function parentToGui(inst)
 end
 
 local state = {
-    esp = true,
+    esp = false,
     boxes = true,
     names = true,
     health = true,
     distance = true,
-    chams = true,
+    chams = false,
     teamCheck = false,
 
     aimbot = false,
