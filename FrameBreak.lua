@@ -59,6 +59,12 @@ local state = {
 
     rapid = false,
     rapidCps = 30,
+
+    cornerBoxes = true,
+    skeletons = false,
+    tracers = false,
+    visibilityCheck = false,
+    targetHud = false,
 }
 
 local lastTarget = nil
@@ -113,6 +119,23 @@ local function findTarget(fovRadius)
 end
 
 -- ============================================================
+-- VISIBILITY CHECK
+-- ============================================================
+local function isVisible(head, char)
+    local cam = workspace.CurrentCamera
+    if not cam or not head then return false end
+    local origin = cam.CFrame.Position
+    local dir = head.Position - origin
+    if dir.Magnitude < 1 then return true end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { char, LocalPlayer.Character }
+    local hit = workspace:Raycast(origin, dir, params)
+    if not hit then return true end
+    return (hit.Position - head.Position).Magnitude < math.max(head.Size.Magnitude, 1)
+end
+
+-- ============================================================
 -- ESP / CHAMS
 -- ============================================================
 local oldEsp = guiParent:FindFirstChild("PulsarFBEsp")
@@ -131,6 +154,55 @@ chamsFolder.Name = "PulsarFBChams"
 chamsFolder.Parent = workspace
 
 local entries = {}
+
+local DrawAPI = _G.Drawing or Drawing
+local function makeDrawLine(char, aName, bName, color, thickness)
+    local a = char:FindFirstChild(aName)
+    local b = char:FindFirstChild(bName)
+    if not (a and b) then return nil end
+    local l = DrawAPI.new("Line")
+    l.Thickness = thickness or 1.5
+    l.Visible = false
+    l.Color = color or Color3.fromRGB(255, 60, 60)
+    return { ln = l, a = a, b = b }
+end
+
+local function makeSkeleton(char)
+    if not DrawAPI then return nil end
+    local s = {}
+    local function add(aName, bName, c, t)
+        local d = makeDrawLine(char, aName, bName, c, t)
+        if d then table.insert(s, d) end
+    end
+    add("Head", "UpperTorso")
+    add("Head", "LowerTorso")
+    add("UpperTorso", "LeftUpperArm")
+    add("UpperTorso", "RightUpperArm")
+    add("LowerTorso", "LeftUpperLeg")
+    add("LowerTorso", "RightUpperLeg")
+    add("LeftUpperArm", "LeftLowerArm")
+    add("RightUpperArm", "RightLowerArm")
+    add("LeftUpperLeg", "LeftLowerLeg")
+    add("RightUpperLeg", "RightLowerLeg")
+    add("LeftLowerArm", "LeftHand")
+    add("RightLowerArm", "RightHand")
+    add("LeftLowerLeg", "LeftFoot")
+    add("RightLowerLeg", "RightFoot")
+    return s
+end
+
+local function destroySkeleton(entry)
+    if entry.skel then
+        for _, d in ipairs(entry.skel) do
+            pcall(function() d.ln:Remove() end)
+        end
+        entry.skel = nil
+    end
+    if entry.tracer then
+        pcall(function() entry.tracer.ln:Remove() end)
+        entry.tracer = nil
+    end
+end
 
 local function makeLabel(plr, head)
     local bg = Instance.new("BillboardGui")
@@ -167,6 +239,49 @@ local function makeBox()
     stroke.Color = Color3.fromRGB(255, 65, 65)
     stroke.Thickness = 1.5
     stroke.Parent = box
+
+    -- health bar
+    local hpBack = Instance.new("Frame")
+    hpBack.Name = "HpBack"
+    hpBack.Position = UDim2.new(0, 2, 0, -6)
+    hpBack.Size = UDim2.new(1, -4, 0, 4)
+    hpBack.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+    hpBack.BackgroundColorTransparency = 0.35
+    hpBack.BorderSizePixel = 0
+    hpBack.Parent = box
+    local foo = Instance.new("UICorner", hpBack); foo.CornerRadius = UDim.new(1, 0)
+    local hpFill = Instance.new("Frame")
+    hpFill.Name = "HpFill"
+    hpFill.Position = UDim2.fromScale(0, 0)
+    hpFill.Size = UDim2.fromScale(1, 1)
+    hpFill.BackgroundColor3 = Color3.fromRGB(90, 220, 150)
+    hpFill.BorderSizePixel = 0
+    hpFill.Parent = hpBack
+    local bar = Instance.new("UICorner", hpFill); bar.CornerRadius = UDim.new(1, 0)
+
+    -- corner accents
+    local corners = Instance.new("Frame")
+    corners.Name = "Corners"
+    corners.Position = UDim2.fromScale(0, 0)
+    corners.Size = UDim2.fromScale(1, 1)
+    corners.BackgroundTransparency = 1
+    corners.BorderSizePixel = 0
+    corners.Parent = box
+    for i = 1, 4 do
+        local h = Instance.new("Frame")
+        h.Name = "c" .. i
+        h.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        h.BorderSizePixel = 0
+        h.Size = UDim2.fromOffset(8, 1)
+        h.Parent = corners
+        local v = Instance.new("Frame")
+        v.Name = "v" .. i
+        v.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        v.BorderSizePixel = 0
+        v.Size = UDim2.fromOffset(1, 8)
+        v.Parent = corners
+    end
+    -- position corners in RenderStepped because they depend on box size; do it here once per update.
     box.Parent = espGui
     return box
 end
@@ -175,6 +290,7 @@ local function removeEntry(entry)
     if entry.box then pcall(function() entry.box:Destroy() end) end
     if entry.label then pcall(function() entry.label:Destroy() end) end
     if entry.highlight then pcall(function() entry.highlight:Destroy() end) end
+    destroySkeleton(entry)
     entry.box, entry.label, entry.highlight, entry.char = nil, nil, nil, nil
 end
 
@@ -228,6 +344,29 @@ local function syncEsp()
                     entry.box = nil
                 end
 
+                -- skeleton / tracer
+                if state.esp and state.skeletons and DrawAPI then
+                    if not entry.skel then
+                        entry.skel = makeSkeleton(char)
+                    end
+                elseif entry.skel then
+                    destroySkeleton(entry)
+                end
+                if state.esp and state.tracers and DrawAPI and entry.char.Parent then
+                    if not entry.tracer then
+                        local head = entry.char:FindFirstChild("Head") or entry.char:FindFirstChild("HumanoidRootPart")
+                        if head then
+                            local l = DrawAPI.new("Line")
+                            l.Thickness = 1.5
+                            l.Visible = false
+                            l.Color = Color3.fromRGB(255, 60, 60)
+                            entry.tracer = { ln = l, a = head }
+                        end
+                    end
+                elseif entry.tracer then
+                    destroySkeleton(entry)
+                end
+
                 -- label
                 local wantLabel = state.esp and (state.names or state.health or state.distance)
                 if wantLabel then
@@ -269,9 +408,81 @@ local function updateBoxes()
     if not cam then return end
     local vp = cam.ViewportSize
 
+    local function updateSkeleton(entry)
+        if not (entry.skel and DrawAPI) then return end
+        for _, d in ipairs(entry.skel) do
+            if d.a.Parent and d.b.Parent then
+                local p = cam:WorldToViewportPoint(d.a.Position)
+                local q = cam:WorldToViewportPoint(d.b.Position)
+                if p.Z > 0 and q.Z > 0 then
+                    d.ln.From = Vector2.new(p.X, p.Y)
+                    d.ln.To = Vector2.new(q.X, q.Y)
+                    d.ln.Visible = true
+                else
+                    d.ln.Visible = false
+                end
+            else
+                d.ln.Visible = false
+            end
+        end
+    end
+
+    local function updateTracer(entry)
+        if not (entry.tracer and DrawAPI) then return end
+        local head = entry.tracer.a
+        if not head or not head.Parent then
+            entry.tracer.ln.Visible = false
+            return
+        end
+        local p = cam:WorldToViewportPoint(head.Position)
+        if p.Z > 0 then
+            entry.tracer.ln.From = Vector2.new(vp.X * 0.5, vp.Y - 8)
+            entry.tracer.ln.To = Vector2.new(p.X, p.Y)
+            entry.tracer.ln.Visible = true
+        else
+            entry.tracer.ln.Visible = false
+        end
+    end
+
+    local function refreshCorners(box, on)
+        local corners = box:FindFirstChild("Corners")
+        if not corners then return end
+        if not on then corners.Visible = false return end
+        corners.Visible = true
+        local w, h = box.AbsoluteSize.X, box.AbsoluteSize.Y
+        local pts = {
+            { 0, 0 }, { w - 8, 0 },
+            { 0, h - 1 }, { w - 8, h - 1 },
+        }
+        for i = 1, 4 do
+            local f = corners:FindFirstChild("c" .. i)
+            if f then f.Position = UDim2.fromOffset(math.floor(pts[i][1]), math.floor(pts[i][2])) end
+            local v = corners:FindFirstChild("v" .. i)
+            if v then v.Position = UDim2.fromOffset(math.floor(pts[i][1]), math.floor(pts[i][2])) end
+        end
+    end
+
     for plr, entry in pairs(entries) do
+        if entry.skel and (not state.esp or not state.skeletons) then
+            destroySkeleton(entry)
+        end
+        if entry.tracer and (not state.esp or not state.tracers) then
+            destroySkeleton(entry)
+        end
+
         local box = entry.box
         local char = entry.char
+        if char and char.Parent then
+            local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+            if head and (not state.visibilityCheck or isVisible(head, char)) then
+                updateSkeleton(entry)
+                updateTracer(entry)
+            else
+                updateSkeleton(entry)
+                updateTracer(entry)
+            end
+        end
+
         if box and char and char.Parent and state.esp and state.boxes then
             local ok, cf, size = pcall(function() return char:GetBoundingBox() end)
             if ok and typeof(cf) == "CFrame" and typeof(size) == "Vector3" and size.Magnitude > 0.1 then
@@ -301,6 +512,7 @@ local function updateBoxes()
                     maxY = math.clamp(maxY, -100, vp.Y + 100)
                     box.Position = UDim2.fromOffset(math.floor(minX), math.floor(minY))
                     box.Size = UDim2.fromOffset(math.max(2, math.floor(maxX - minX)), math.max(2, math.floor(maxY - minY)))
+                    refreshCorners(box, state.cornerBoxes)
                     box.Visible = true
                 else
                     box.Visible = false
@@ -345,6 +557,128 @@ fovStroke.Transparency = 0.25
 fovStroke.Parent = fovCircle
 
 -- ============================================================
+-- TARGET HUD
+-- ============================================================
+local oldHud = guiParent:FindFirstChild("PulsarFBTargetHud")
+if oldHud then oldHud:Destroy() end
+local hudGui = Instance.new("ScreenGui")
+hudGui.Name = "PulsarFBTargetHud"
+hudGui.ResetOnSpawn = false
+hudGui.IgnoreGuiInset = true
+hudGui.DisplayOrder = 996
+parentToGui(hudGui)
+
+local hudFrame = Instance.new("Frame")
+hudFrame.Name = "Target"
+hudFrame.AnchorPoint = Vector2.new(1, 0)
+hudFrame.Position = UDim2.new(1, -18, 0, 18)
+hudFrame.Size = UDim2.fromOffset(250, 108)
+hudFrame.BackgroundColor3 = Color3.fromRGB(16, 18, 26)
+hudFrame.BackgroundTransparency = 0.12
+hudFrame.BorderSizePixel = 0
+hudFrame.Visible = false
+local hudCorner = Instance.new("UICorner", hudFrame); hudCorner.CornerRadius = UDim.new(0, 12)
+local hudStroke = Instance.new("UIStroke", hudFrame); hudStroke.Color = Color3.fromRGB(255, 70, 70); hudStroke.Thickness = 1
+hudFrame.Parent = hudGui
+
+local hudTitle = Instance.new("TextLabel", hudFrame)
+hudTitle.Name = "Title"
+hudTitle.Position = UDim2.fromOffset(12, 6)
+hudTitle.Size = UDim2.new(1, -24, 0, 14)
+hudTitle.BackgroundTransparency = 1
+hudTitle.Font = Enum.Font.GothamBold
+hudTitle.TextSize = 11
+hudTitle.TextColor3 = Color3.fromRGB(255, 65, 65)
+hudTitle.TextXAlignment = Enum.TextXAlignment.Left
+hudTitle.Text = "TARGET"
+
+local hudName = Instance.new("TextLabel", hudFrame)
+hudName.Name = "Name"
+hudName.Position = UDim2.fromOffset(12, 24)
+hudName.Size = UDim2.new(1, -24, 0, 18)
+hudName.BackgroundTransparency = 1
+hudName.Font = Enum.Font.GothamBold
+hudName.TextSize = 14
+hudName.TextColor3 = Color3.fromRGB(236, 236, 244)
+hudName.TextXAlignment = Enum.TextXAlignment.Left
+hudName.Text = ""
+
+local hudHpBack = Instance.new("Frame", hudFrame)
+hudHpBack.Name = "HpBack"
+hudHpBack.Position = UDim2.fromOffset(12, 48)
+hudHpBack.Size = UDim2.new(1, -24, 0, 10)
+hudHpBack.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+hudHpBack.BackgroundColorTransparency = 0.2
+hudHpBack.BorderSizePixel = 0
+hudHpBack.Parent = hudFrame
+local hdfc = Instance.new("UICorner", hudHpBack); hdfc.CornerRadius = UDim.new(1, 0)
+local hudHpFill = Instance.new("Frame", hudHpBack)
+hudHpFill.Name = "Fill"
+hudHpFill.Position = UDim2.fromScale(0, 0)
+hudHpFill.Size = UDim2.fromScale(1, 1)
+hudHpFill.BackgroundColor3 = Color3.fromRGB(90, 220, 150)
+hudHpFill.BorderSizePixel = 0
+hudHpFill.Parent = hudHpBack
+local hfc = Instance.new("UICorner", hudHpFill); hfc.CornerRadius = UDim.new(1, 0)
+
+local hudHpText = Instance.new("TextLabel", hudFrame)
+hudHpText.Name = "HpText"
+hudHpText.Position = UDim2.fromOffset(12, 60)
+hudHpText.Size = UDim2.new(1, -24, 0, 14)
+hudHpText.BackgroundTransparency = 1
+hudHpText.Font = Enum.Font.Gotham
+hudHpText.TextSize = 10
+hudHpText.TextColor3 = Color3.fromRGB(150, 160, 180)
+hudHpText.TextXAlignment = Enum.TextXAlignment.Left
+hudHpText.Text = ""
+
+local hudInfo = Instance.new("TextLabel", hudFrame)
+hudInfo.Name = "Info"
+hudInfo.Position = UDim2.fromOffset(12, 80)
+hudInfo.Size = UDim2.new(1, -24, 0, 14)
+hudInfo.BackgroundTransparency = 1
+hudInfo.Font = Enum.Font.Gotham
+hudInfo.TextSize = 10
+hudInfo.TextColor3 = Color3.fromRGB(150, 160, 180)
+hudInfo.TextXAlignment = Enum.TextXAlignment.Left
+hudInfo.Text = ""
+
+local function updateTargetHud()
+    if not state.targetHud then
+        hudFrame.Visible = false
+        return
+    end
+    local player = lastTarget and lastTarget.player
+    local char = player and player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not player or not char or not hum or hum.Health <= 0 or not root then
+        hudFrame.Visible = false
+        return
+    end
+    hudFrame.Visible = true
+    hudName.Text = player.Name
+
+    local ratio = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+    if ratio < 0.3 then
+        hudHpFill.BackgroundColor3 = Color3.fromRGB(255, 70, 70)
+    elseif ratio < 0.6 then
+        hudHpFill.BackgroundColor3 = Color3.fromRGB(255, 180, 60)
+    else
+        hudHpFill.BackgroundColor3 = Color3.fromRGB(90, 220, 150)
+    end
+    hudHpFill.Size = UDim2.fromScale(ratio, 1)
+    hudHpText.Text = string.format("HP %d / %d", math.floor(hum.Health), math.floor(hum.MaxHealth))
+
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local camPos = workspace.CurrentCamera.CFrame.Position
+    local myPos = myRoot and myRoot.Position or camPos
+    local dist = math.floor((root.Position - myPos).Magnitude)
+    hudInfo.Text = string.format("%dm  •  %s", dist, state.targetPart)
+end
+
+-- ============================================================
 -- SILENT AIM
 -- ============================================================
 local silentHooked = false
@@ -361,21 +695,72 @@ local function syntheticHit(target, origin)
     }
 end
 
+local silentPrev = getgenv().pulsarFBSilent
+if silentPrev then
+    pcall(function()
+        if silentPrev.kind == "namecall" then
+            setreadonly(silentPrev.mt, false)
+            rawset(silentPrev.mt, "__namecall", silentPrev.old)
+            setreadonly(silentPrev.mt, true)
+        elseif silentPrev.kind == "hookfunction" and hookfunction then
+            hookfunction(silentPrev.hooked, silentPrev.old)
+        end
+    end)
+    getgenv().pulsarFBSilent = nil
+end
+
+local function shouldSilentIntercept()
+    if not state.silent then return false end
+    local caller
+    if getcallingscript then
+        pcall(function() caller = getcallingscript() end)
+    end
+    local name = caller and caller.Name
+    if name == "Aim" or name == "WeaponController" or name == "Combat" then
+        return true
+    end
+    return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+end
+
+local function silentCall(oldCall, self, origin, direction, params)
+    if shouldSilentIntercept() and typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+        local target = findTarget(state.silentFov)
+        if target then
+            local dir = target.position - origin
+            if state.bulletTP then
+                return syntheticHit(target, origin)
+            end
+            local result = oldCall(self, origin, dir, params)
+            if result and result.Instance == target.part then
+                return result
+            end
+            return oldCall(self, origin, direction, params)
+        end
+    end
+    return oldCall(self, origin, direction, params)
+end
+
 local function installSilent()
     if silentHooked then return end
-    if not (getrawmetatable and newcclosure and getnamecallmethod and setreadonly) then return end
 
-    -- restore a hook from a previous execution of this script
-    if getgenv().pulsarFBSilent then
-        local prev = getgenv().pulsarFBSilent
-        pcall(function()
-            setreadonly(prev.mt, false)
-            rawset(prev.mt, "__namecall", prev.old)
-            setreadonly(prev.mt, true)
+    -- direct hook first: works even if the game cached workspace.Raycast
+    if hookfunction and newcclosure then
+        local oldRaycast = workspace.Raycast
+        local newRaycast
+        local ok = pcall(function()
+            newRaycast = newcclosure(function(self, origin, direction, params)
+                return silentCall(oldRaycast, self, origin, direction, params)
+            end)
+            hookfunction(oldRaycast, newRaycast)
         end)
-        getgenv().pulsarFBSilent = nil
+        if ok then
+            getgenv().pulsarFBSilent = { kind = "hookfunction", old = oldRaycast, hooked = newRaycast }
+            silentHooked = true
+            return
+        end
     end
 
+    if not (getrawmetatable and newcclosure and getnamecallmethod and setreadonly) then return end
     local okMt, mt = pcall(getrawmetatable, game)
     if not okMt or not mt then return end
     local oldNamecall = mt.__namecall
@@ -384,26 +769,9 @@ local function installSilent()
     local installed = pcall(function()
         setreadonly(mt, false)
         mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if method == "Raycast" and self == workspace and state.silent then
+            if self == workspace and getnamecallmethod() == "Raycast" then
                 local origin, direction, params = ...
-                if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-                    local firing = UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-                    if firing then
-                        local target = findTarget(state.silentFov)
-                        if target then
-                            local dir = target.position - origin
-                            if state.bulletTP then
-                                return syntheticHit(target, origin)
-                            end
-                            local result = oldNamecall(self, origin, dir, params)
-                            if result and result.Instance == target.part then
-                                return result
-                            end
-                            return oldNamecall(self, origin, direction, params)
-                        end
-                    end
-                end
+                return silentCall(oldNamecall, self, origin, direction, params)
             end
             return oldNamecall(self, ...)
         end)
@@ -411,7 +779,7 @@ local function installSilent()
     end)
 
     if installed then
-        getgenv().pulsarFBSilent = { mt = mt, old = oldNamecall }
+        getgenv().pulsarFBSilent = { kind = "namecall", mt = mt, old = oldNamecall }
         silentHooked = true
     end
 end
@@ -433,10 +801,21 @@ RunService:BindToRenderStep("PulsarFBAim", Enum.RenderPriority.Camera.Value + 10
     end
 end)
 
+local VIM = game:GetService("VirtualInputManager")
+local function fireClick()
+    local ok = pcall(function()
+        VIM:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+        VIM:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+    end)
+    if not ok then
+        pcall(function() mouse1click() end)
+    end
+end
+
 task.spawn(function()
     while true do
         if state.rapid and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-            pcall(function() mouse1click() end)
+            fireClick()
             task.wait(1 / math.max(state.rapidCps, 1))
         else
             task.wait(0.03)
@@ -455,6 +834,16 @@ RunService.RenderStepped:Connect(function()
         else
             fovCircle.Visible = false
         end
+
+        if state.targetHud then
+            local hudTarget = lastTarget and lastTarget.player and lastTarget.player.Parent and lastTarget
+            if not hudTarget then
+                local t = findTarget(math.max(state.fov, 260))
+                if t then lastTarget = t end
+            end
+        end
+        updateTargetHud()
+
         updateBoxes()
     end)
 end)
@@ -881,20 +1270,27 @@ local function makeButton(parent, label, y, callback)
 end
 
 -- VISUALS
-local espPanel = makePanel(visualsTab, "PLAYER ESP", 0, 0, 308, 210)
+local espPanel = makePanel(visualsTab, "PLAYER ESP", 0, 0, 308, 240)
 makeToggle(espPanel, "esp", "Enable ESP", 0)
 makeToggle(espPanel, "boxes", "Boxes", 28)
 makeToggle(espPanel, "names", "Names", 56)
 makeToggle(espPanel, "health", "Health", 84)
 makeToggle(espPanel, "distance", "Distance", 112)
+makeToggle(espPanel, "skeletons", "Skeleton", 140)
+makeToggle(espPanel, "tracers", "Tracers", 168)
 
-local chamsPanel = makePanel(visualsTab, "CHAMS", 320, 0, 308, 210)
-makeToggle(chamsPanel, "chams", "Enable chams", 0)
-makeToggle(chamsPanel, "teamCheck", "Team check", 28)
-makeInfo(chamsPanel, 64, 100, "Chams use Highlight (AlwaysOnTop). Team check skips players on your Team.")
+local chamsPanel = makePanel(visualsTab, "EXTRA", 320, 0, 308, 240)
+makeToggle(chamsPanel, "cornerBoxes", "Corner boxes", 0)
+makeToggle(chamsPanel, "visibilityCheck", "Visibility check", 28)
+makeToggle(chamsPanel, "chams", "Chams", 56)
+makeToggle(chamsPanel, "teamCheck", "Team check", 84)
+makeInfo(chamsPanel, 112, 100, "Corner boxes, skeletons, tracers and chams are all client-side.\nVisibility check only draws players you can see.")
 
-local visualStatus = makePanel(visualsTab, "STATUS", 0, 222, 628, 100)
-local visualStatusLabel = makeInfo(visualStatus, 0, 50, "players: 0 | target: none")
+local targetPanel = makePanel(visualsTab, "TARGET HUD", 0, 252, 308, 70)
+makeToggle(targetPanel, "targetHud", "Enable target HUD", 0)
+
+local visualStatus = makePanel(visualsTab, "STATUS", 320, 252, 308, 70)
+local visualStatusLabel = makeInfo(visualStatus, 0, 20, "players: 0 | target: none")
 table.insert(statusLabels, visualStatusLabel)
 
 -- COMBAT
