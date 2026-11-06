@@ -710,58 +710,10 @@ if silentPrev then
     getgenv().pulsarFBSilent = nil
 end
 
-local function shouldSilentIntercept()
-    if not state.silent then return false end
-    local caller
-    if getcallingscript then
-        pcall(function() caller = getcallingscript() end)
-    end
-    local name = caller and caller.Name
-    if name == "Aim" or name == "WeaponController" or name == "Combat" then
-        return true
-    end
-    return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-end
-
-local function silentCall(oldCall, self, origin, direction, params)
-    if shouldSilentIntercept() and typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-        local target = findTarget(state.silentFov)
-        if target then
-            local dir = target.position - origin
-            if state.bulletTP then
-                return syntheticHit(target, origin)
-            end
-            local result = oldCall(self, origin, dir, params)
-            if result and result.Instance == target.part then
-                return result
-            end
-            return oldCall(self, origin, direction, params)
-        end
-    end
-    return oldCall(self, origin, direction, params)
-end
-
 local function installSilent()
     if silentHooked then return end
-
-    -- direct hook first: works even if the game cached workspace.Raycast
-    if hookfunction and newcclosure then
-        local oldRaycast = workspace.Raycast
-        local newRaycast
-        local ok = pcall(function()
-            newRaycast = newcclosure(function(self, origin, direction, params)
-                return silentCall(oldRaycast, self, origin, direction, params)
-            end)
-            hookfunction(oldRaycast, newRaycast)
-        end)
-        if ok then
-            getgenv().pulsarFBSilent = { kind = "hookfunction", old = oldRaycast, hooked = newRaycast }
-            silentHooked = true
-            return
-        end
-    end
-
     if not (getrawmetatable and newcclosure and getnamecallmethod and setreadonly) then return end
+
     local okMt, mt = pcall(getrawmetatable, game)
     if not okMt or not mt then return end
     local oldNamecall = mt.__namecall
@@ -770,9 +722,26 @@ local function installSilent()
     local installed = pcall(function()
         setreadonly(mt, false)
         mt.__namecall = newcclosure(function(self, ...)
-            if self == workspace and getnamecallmethod() == "Raycast" then
+            local method = getnamecallmethod()
+            if method == "Raycast" and self == workspace and state.silent then
                 local origin, direction, params = ...
-                return silentCall(oldNamecall, self, origin, direction, params)
+                if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                    local firing = UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+                    if firing then
+                        local target = findTarget(state.silentFov)
+                        if target then
+                            local dir = target.position - origin
+                            if state.bulletTP then
+                                return syntheticHit(target, origin)
+                            end
+                            local result = oldNamecall(self, origin, dir, params)
+                            if result and result.Instance == target.part then
+                                return result
+                            end
+                            return oldNamecall(self, origin, direction, params)
+                        end
+                    end
+                end
             end
             return oldNamecall(self, ...)
         end)
