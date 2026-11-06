@@ -39,7 +39,7 @@ local state = {
     rideSpeed = 120,
     flySpeed = 80,
     trickMode = "Spin",
-    trickSpeed = 0.5,
+    trickSpeed = 1,
     ride = nil,
     cash = 0,
     lastTrick = nil,
@@ -187,11 +187,11 @@ end
 -- ============================================================
 -- AUTO TRICKS (jump + spin / flip cycle)
 -- ============================================================
-local SPIN_JUMP_VELOCITY = 14
-local SPIN_ASCEND_TIME = 0.4
-local SPIN_DESCENT_SPEED = -80
-local SPIN_REPEAT_DELAY = 0.6
-local SPIN_MAX_DESCENT_TIME = 2.0
+local SPIN_JUMP_VELOCITY = 15
+local SPIN_ASCEND_TIME = 0.35
+local SPIN_DESCENT_SPEED = -90
+local SPIN_REPEAT_DELAY = 0.35
+local SPIN_MAX_DESCENT_TIME = 1.6
 local SPIN_GROUND_CHECK_DISTANCE = 3.5
 
 local spin = {
@@ -340,17 +340,17 @@ local function startSpinCycle()
     spin.seat = seat
 
     if spin.mode == "Spin" then
-        spin.targetAngle = math.rad(720)
-        spin.rate = math.rad(720) * (state.trickSpeed or 0.5)
+        spin.targetAngle = math.rad(1440)
+        spin.rate = math.rad(720) * (state.trickSpeed or 1)
     elseif spin.mode == "Backflip" then
         spin.targetAngle = math.rad(360)
-        spin.rate = math.rad(360) * (state.trickSpeed or 0.5)
+        spin.rate = math.rad(540) * (state.trickSpeed or 1)
     elseif spin.mode == "Frontflip" then
         spin.targetAngle = math.rad(-360)
-        spin.rate = math.rad(-360) * (state.trickSpeed or 0.5)
+        spin.rate = math.rad(-540) * (state.trickSpeed or 1)
     else
         spin.targetAngle = math.rad(180)
-        spin.rate = math.rad(360) * (state.trickSpeed or 0.5)
+        spin.rate = math.rad(540) * (state.trickSpeed or 1)
     end
 
     setSpinOrientation(body, 0)
@@ -1711,7 +1711,7 @@ makeToggle(tc, "tricks", "Enable", 0, function(on)
     end
 end)
 makeModeButton(tc, 32)
-makeSlider(tc, "trickSpeed", "Spin speed", 0.2, 1.5, 0.1, 64, "x%.1f")
+makeSlider(tc, "trickSpeed", "Spin speed", 0.3, 1.5, 0.1, 64, "x%.1f")
 local trickInfo = makeInfo(tc, 104, 20, "Mode: Spin")
 
 local dp = makePanel(farmTab, "PIZZA DELIVERY", 320, 0, 308, 170)
