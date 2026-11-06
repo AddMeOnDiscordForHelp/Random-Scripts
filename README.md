@@ -16,18 +16,15 @@ Matcha-style Luau menu: dark chrome, top tabs, child panels with accent titlebar
 
 ### Features
 - **Auto Wheelie** - AlignOrientation on the DriveSeat, adjustable angle, freeze position.
-- **Auto Tricks** - jump/spin cycle with Random / Spin / Backflip / Frontflip / 180 modes.
-- **Auto Pizza Delivery** - teleports to the delivery NPC, starts an order, teleports to the customer, and polls `FoodDelivery.Deliver` until paid. Tracks deliveries + pizza cash.
-- **Police ESP** - red highlight + POLICE tag.
+- **Auto Tricks** - jump/spin cycle. Default **Spin** (safe Y-axis money spin); Random only picks Spin/180 so it won't flip you off. Tricks only run when seated.
+- **Seat Lock** - while wheelie/tricks run, a WeldConstraint pins your HumanoidRootPart to the seat so the vehicle cannot fling you off.
+- **Auto Pizza Delivery** - 20-second tweened cycle: tween to NPC -> start order -> tween to customer -> poll Deliver. If the server's ~30s gate rejects, it keeps polling and pays when allowed.
+- **Police ESP** - red 2D projected box + highlight + POLICE tag, updated every frame so it sticks.
 - **Police Push** - launches police cars away, disables touch/collision, blocks `PoliceHit`.
-- **Speed Boost / Uncap** - walk speed + ride velocity.
+- **Speed Boost / Uncap** - MOVEMENT tab, SPEED panel.
 - **CFrame Fly** - camera-relative CFrame vfly.
 - **Desync** - CameraModule / FirstPersonCamera sees a rotated root.
 - **Auto Claim** - daily / quest / achievement.
-
-### Notes
-- Pizza delivery: server accepts after the trip time (~30s). Keep tricks / fly / wheelie off while farming.
-- `FARM` tab has a "Teleport to delivery NPC" button and live delivery status.
 
 ## Tools
 
