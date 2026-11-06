@@ -8,28 +8,24 @@
 loadstring(request({Url='https://raw.githubusercontent.com/AddMeOnDiscordForHelp/Random-Scripts/main/Kukirin.lua?v='..os.time(),Method='GET'}).Body)();
 ```
 
-### UI
-Matcha-style Luau menu: dark chrome, top tabs, child panels with accent titlebars, pill toggles, drag header, Pulsar.One blue branding. `F6` / `Insert` hides it.
-
 ### Tabs
 `RIDE`, `FARM`, `VISUALS`, `MOVEMENT`, `MISC`.
 
-### Features
-- **Auto Wheelie** - AlignOrientation on the DriveSeat, adjustable angle, freeze position.
-- **Auto Tricks** - jump/spin cycle. Default **Spin** (safe Y-axis money spin); Random only picks Spin/180 so it won't flip you off. Tricks only run when seated.
-- **Seat Lock** - while wheelie/tricks run, a WeldConstraint pins your HumanoidRootPart to the seat so the vehicle cannot fling you off.
-- **Auto Pizza Delivery** - 20-second tweened cycle: tween to NPC -> start order -> tween to customer -> poll Deliver. If the server's ~30s gate rejects, it keeps polling and pays when allowed.
-- **Police ESP** - red 2D projected box + highlight + POLICE tag, updated every frame so it sticks.
-- **Police Push** - launches police cars away, disables touch/collision, blocks `PoliceHit`.
+### FARM
+- **Auto Tricks** - now in the FARM tab. Default Spin does ~20 rotations at 10800 deg/s, 0.15s ascend, 0.05s repeat. Random only picks Spin/180.
+- **Seat Lock** - WeldConstraint pins HRP to the seat while tricks/wheelie run, so you can't get flung off.
+- **Auto Pizza Delivery** - 20s tweened cycle: tween to NPC, start order, tween to customer, **jump off**, deliver, **remount**, return to NPC.
+
+### Other
+- **Police ESP** - red 2D box + highlight + POLICE tag.
+- **Police Push**.
 - **Speed Boost / Uncap** - MOVEMENT tab, SPEED panel.
-- **CFrame Fly** - camera-relative CFrame vfly.
-- **Desync** - CameraModule / FirstPersonCamera sees a rotated root.
-- **Auto Claim** - daily / quest / achievement.
+- **CFrame Fly**, **Desync**, **Auto Claim**.
 
 ## Tools
 
-- `DumperAll.lua` - full instance/remote/script/bytecode dump.
-- `DumperDecomp.lua` - bytecode + decompiler probe.
+- `DumperAll.lua`
+- `DumperDecomp.lua`
 
 ## Legacy (not maintained)
 
