@@ -963,6 +963,8 @@ local function makeTab(name)
     return f
 end
 
+local tabUnderlines = {}
+
 local function switchTab(name)
     activeTab = name
     for k, f in pairs(tabFrames) do
@@ -970,7 +972,8 @@ local function switchTab(name)
     end
     for k, b in pairs(tabButtons) do
         b.TextColor3 = (k == name) and TEXT or LABEL
-        b.Underline.Visible = (k == name)
+        local u = tabUnderlines[k]
+        if u then u.Visible = (k == name) end
     end
 end
 
@@ -994,7 +997,7 @@ for i, name in ipairs(tabOrder) do
         Visible = (name == activeTab),
         ZIndex = 5,
     }, b)
-    b.Underline = ul
+    tabUnderlines[name] = ul
     b.MouseButton1Click:Connect(function() switchTab(name) end)
     tabButtons[name] = b
 end
