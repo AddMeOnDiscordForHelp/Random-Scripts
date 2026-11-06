@@ -11,9 +11,13 @@ loadstring(request({Url='https://raw.githubusercontent.com/AddMeOnDiscordForHelp
 ### UI
 Matcha-style Luau menu: dark chrome, top tabs, child panels with accent titlebars, pill toggles, drag header, Pulsar.One blue branding. `F6` / `Insert` hides it.
 
+### Tabs
+`RIDE`, `FARM`, `VISUALS`, `MOVEMENT`, `MISC`.
+
 ### Features
 - **Auto Wheelie** - AlignOrientation on the DriveSeat, adjustable angle, freeze position.
-- **Auto Tricks** - proven jump/spin cycle with Random / Spin / Backflip / Frontflip / 180 modes.
+- **Auto Tricks** - jump/spin cycle with Random / Spin / Backflip / Frontflip / 180 modes.
+- **Auto Pizza Delivery** - teleports to the delivery NPC, starts an order, teleports to the customer, and polls `FoodDelivery.Deliver` until paid. Tracks deliveries + pizza cash.
 - **Police ESP** - red highlight + POLICE tag.
 - **Police Push** - launches police cars away, disables touch/collision, blocks `PoliceHit`.
 - **Speed Boost / Uncap** - walk speed + ride velocity.
@@ -21,8 +25,9 @@ Matcha-style Luau menu: dark chrome, top tabs, child panels with accent titlebar
 - **Desync** - CameraModule / FirstPersonCamera sees a rotated root.
 - **Auto Claim** - daily / quest / achievement.
 
-### Tabs
-`RIDE`, `VISUALS`, `MOVEMENT`, `MISC`.
+### Notes
+- Pizza delivery: server accepts after the trip time (~30s). Keep tricks / fly / wheelie off while farming.
+- `FARM` tab has a "Teleport to delivery NPC" button and live delivery status.
 
 ## Tools
 
