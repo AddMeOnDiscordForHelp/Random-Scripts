@@ -1,30 +1,23 @@
 # Random Scripts
 
-Pulsar.One / Fallen / Fust / Kukirin scripts. Plain source, no obfuscation.
+**Active project: Kukirin Life.** The Fust / Fallen files are old builds kept for reference only.
 
 ## Kukirin Life
 
 ```lua
-loadstring(request({Url='https://raw.githubusercontent.com/AddMeOnDiscordForHelp/Random-Scripts/main/Kukirin.lua',Method='GET'}).Body)();
+loadstring(request({Url='https://raw.githubusercontent.com/AddMeOnDiscordForHelp/Random-Scripts/main/Kukirin.lua?v='..os.time(),Method='GET'}).Body)();
 ```
 
-- **Auto wheelie** - locks chassis pitch at the slider angle, optional freeze position.
-- **Police push** - launches PoliceNPCs away, disables their touch, blocks PoliceHit, auto get-up.
-- **Money farm** - collects money-rain drops and claims daily / quest / achievement rewards.
+- **Auto wheelie** - locks the chassis pitch at the slider angle; freeze position pins it in place.
+- **Police push** - launches `Workspace.PoliceNPCs` cars away, kills their touch events, blocks `PoliceHit`, auto get-up.
+- **Money farm** - collects money-rain drops, claims daily / quest / achievement rewards.
 - `F6` hides the panel.
 
-## Fust Survival (plain source)
+## Tools
 
-Lobby loader: `Pulsar.One.Fust.Lobby.lua`
+- `DumperAll.lua` - full instance/remote/script/bytecode dump.
+- `DumperDecomp.lua` - bytecode + decompiler probe.
 
-In-game fallback: `Pulsar.One.Fust.InGame.lua`
+## Legacy (not maintained)
 
-Main: `Pulsar.One.Fust.lua`
-
-## Dumpers
-
-`DumperAll.lua`, `DumperDecomp.lua`, `Dumper.lua`, `DumperFull.lua`
-
-## Old Fallen build
-
-`Pulsar.One.lua`, `Pulsar.One.lobby.lua`, `Pulsar.One.preload.lua`, `fallen_UD.lua`
+`Pulsar.One.Fust.*`, `Pulsar.One.*`, `ACEmu.lua`, `fallen_UD.lua`, `Dumper.lua`, `DumperFull.lua`.
