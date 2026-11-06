@@ -1,30 +1,52 @@
 --[[
-    Pulsar.One - Kukirin Life toolkit
-      - Auto Wheelie   (locks chassis pitch, optional freeze)
-      - Auto Tricks    (backflip / frontflip / 180 / 360 spin farm)
-      - Police Push    (launches PoliceNPCs away + blocks PoliceHit + auto get-up)
-      - Police ESP     (highlight + POLICE tag)
-      - Claim Rewards  (daily / quest / achievement)
-      - Speed Boost    (character + ride)
-      - Speed Uncap    (higher walk + ride velocity)
-      - Desync         (CameraModule sees a rotated root)
-      - CFrame Fly     (camera-relative CFrame vfly)
+    Pulsar.One | Kukirin Life
+    Matcha-style Luau menu (top tabs + child panels), Pulsar.One branding.
 
-    F6 hides the panel.
+    Features:
+      RIDE      - Auto Wheelie (AlignOrientation), Auto Tricks (spin / flip farm)
+      VISUALS   - Police ESP, Police Push
+      MOVEMENT  - Speed Boost, Speed Uncap, CFrame Fly, Desync
+      MISC      - Auto Claim, restore / stop
+
+    F6 or Insert hides the menu. Drag the header to move it.
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local RS = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 while not LocalPlayer do task.wait(0.1); LocalPlayer = Players.LocalPlayer end
 local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local remotes = RS:FindFirstChild("Remotes")
-local charRemotes = remotes and remotes:FindFirstChild("Character")
+-- ============================================================
+-- STATE
+-- ============================================================
+local state = {
+    wheelie = false,
+    tricks = false,
+    freeze = false,
+    policeEsp = false,
+    antiPolice = false,
+    speed = false,
+    uncap = false,
+    fly = false,
+    desync = false,
+    claims = false,
+    angle = 35,
+    rideSpeed = 120,
+    flySpeed = 80,
+    trickMode = "Random",
+    ride = nil,
+    cash = 0,
+    lastTrick = nil,
+    pushed = 0,
+    claimed = 0,
+}
+
 local function remote(path)
-    local cur = remotes
+    local cur = RS:FindFirstChild("Remotes")
     for _, seg in ipairs(path) do
         if not cur then return nil end
         cur = cur:FindFirstChild(seg)
@@ -32,220 +54,12 @@ local function remote(path)
     return cur
 end
 
-local WheelieState = charRemotes and charRemotes:FindFirstChild("WheelieState")
-local PoliceHit = charRemotes and charRemotes:FindFirstChild("PoliceHit")
+local WheelieState = remote({ "Character", "WheelieState" })
+local PoliceHit = remote({ "Character", "PoliceHit" })
 local TrickState = remote({ "Tricks", "TrickState" })
 local claimDaily = remote({ "DailyRewards", "ClaimDailyReward" })
 local claimQuest = remote({ "Quests", "ClaimQuest" })
 local claimAch = remote({ "Achievements", "ClaimAchievementReward" })
-
-local state = {
-    wheelie = false,
-    antiPolice = false,
-    policeEsp = false,
-    tricks = false,
-    claims = false,
-    freeze = false,
-    speed = false,
-    uncap = false,
-    desync = false,
-    fly = false,
-    angle = 55,
-    rideSpeed = 120,
-    flySpeed = 80,
-    ride = nil,
-    pushed = 0,
-    claimed = 0,
-    trickCash = 0,
-    lastTrick = nil,
-}
-
--- ============================================================
--- UI
--- ============================================================
-local old = playerGui:FindFirstChild("PulsarKukirin")
-if old then old:Destroy() end
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "PulsarKukirin"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.DisplayOrder = 999
-gui.Parent = playerGui
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(320, 480)
-frame.Position = UDim2.fromOffset(20, 140)
-frame.BackgroundColor3 = Color3.fromRGB(16, 20, 28)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Parent = gui
-
-local corner1 = Instance.new("UICorner")
-corner1.CornerRadius = UDim.new(0, 8)
-corner1.Parent = frame
-
-local stroke1 = Instance.new("UIStroke")
-stroke1.Color = Color3.fromRGB(56, 124, 255)
-stroke1.Thickness = 1
-stroke1.Parent = frame
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 26)
-title.BackgroundTransparency = 1
-title.Font = Enum.Font.GothamBold
-title.TextSize = 13
-title.TextColor3 = Color3.fromRGB(232, 238, 255)
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = "  Pulsar.One | Kukirin Life"
-title.Active = true
-title.Parent = frame
-
-local status = Instance.new("TextLabel")
-status.Size = UDim2.new(1, -16, 0, 30)
-status.Position = UDim2.fromOffset(8, 28)
-status.BackgroundTransparency = 1
-status.Font = Enum.Font.Gotham
-status.TextSize = 10
-status.TextXAlignment = Enum.TextXAlignment.Left
-status.TextYAlignment = Enum.TextYAlignment.Top
-status.TextWrapped = true
-status.TextColor3 = Color3.fromRGB(150, 160, 180)
-status.Text = "loading..."
-status.Parent = frame
-
-local function mkToggle(label, y, flag)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, -16, 0, 24)
-    b.Position = UDim2.fromOffset(8, y)
-    b.BackgroundColor3 = Color3.fromRGB(28, 38, 56)
-    b.BorderSizePixel = 0
-    b.Font = Enum.Font.Gotham
-    b.TextSize = 11
-    b.TextColor3 = Color3.fromRGB(220, 228, 240)
-    b.TextXAlignment = Enum.TextXAlignment.Left
-    b.Text = "  " .. label .. ": off"
-    b.Parent = frame
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 4)
-    c.Parent = b
-    b.MouseButton1Click:Connect(function()
-        state[flag] = not state[flag]
-        b.Text = "  " .. label .. ": " .. (state[flag] and "on" or "off")
-        b.BackgroundColor3 = state[flag] and Color3.fromRGB(40, 80, 150) or Color3.fromRGB(28, 38, 56)
-    end)
-end
-
-local function mkSlider(label, y, flag, minimum, maximum, value, suffix)
-    local lab = Instance.new("TextLabel")
-    lab.Size = UDim2.new(1, -16, 0, 16)
-    lab.Position = UDim2.fromOffset(8, y)
-    lab.BackgroundTransparency = 1
-    lab.Font = Enum.Font.Gotham
-    lab.TextSize = 10
-    lab.TextXAlignment = Enum.TextXAlignment.Left
-    lab.TextColor3 = Color3.fromRGB(170, 180, 200)
-    lab.Parent = frame
-
-    local bar = Instance.new("TextButton")
-    bar.Size = UDim2.new(1, -16, 0, 10)
-    bar.Position = UDim2.fromOffset(8, y + 18)
-    bar.BackgroundColor3 = Color3.fromRGB(28, 38, 56)
-    bar.BorderSizePixel = 0
-    bar.Text = ""
-    bar.Parent = frame
-    local bc = Instance.new("UICorner")
-    bc.CornerRadius = UDim.new(0, 4)
-    bc.Parent = bar
-
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new(0.5, 0, 1, 0)
-    fill.BackgroundColor3 = Color3.fromRGB(56, 124, 255)
-    fill.BorderSizePixel = 0
-    fill.Parent = bar
-    local fc = Instance.new("UICorner")
-    fc.CornerRadius = UDim.new(0, 4)
-    fc.Parent = fill
-
-    local function setValue(v)
-        state[flag] = v
-        fill.Size = UDim2.new((v - minimum) / (maximum - minimum), 0, 1, 0)
-        lab.Text = string.format("%s: %.0f%s", label, v, suffix or "")
-    end
-
-    local function seek()
-        local m = UIS:GetMouseLocation()
-        local rel = math.clamp((m.X - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1), 0, 1)
-        setValue(minimum + rel * (maximum - minimum))
-    end
-
-    setValue(value)
-    bar.MouseButton1Click:Connect(seek)
-    bar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            seek()
-        end
-    end)
-end
-
-mkToggle("auto wheelie", 62, "wheelie")
-mkToggle("police push", 88, "antiPolice")
-mkToggle("police esp", 114, "policeEsp")
-mkToggle("auto tricks", 140, "tricks")
-mkToggle("auto claim", 166, "claims")
-mkToggle("freeze position", 192, "freeze")
-mkToggle("speed boost", 218, "speed")
-mkToggle("speed uncap", 244, "uncap")
-mkToggle("desync", 270, "desync")
-mkToggle("cframe fly", 296, "fly")
-
-mkSlider("wheelie angle", 326, "angle", -80, 80, 55, " deg")
-mkSlider("ride speed", 362, "rideSpeed", 30, 300, 120, " studs/s")
-mkSlider("fly speed", 398, "flySpeed", 10, 500, 80, " studs/s")
-
-local restore = Instance.new("TextButton")
-restore.Size = UDim2.new(1, -16, 0, 24)
-restore.Position = UDim2.fromOffset(8, 442)
-restore.BackgroundColor3 = Color3.fromRGB(28, 38, 56)
-restore.BorderSizePixel = 0
-restore.Font = Enum.Font.Gotham
-restore.TextSize = 11
-restore.TextColor3 = Color3.fromRGB(220, 228, 240)
-restore.Text = "restore hooks / fly"
-restore.Parent = frame
-local rc = Instance.new("UICorner")
-rc.CornerRadius = UDim.new(0, 4)
-rc.Parent = restore
-
--- draggable
-local dragging, dragStart, startPos = false, nil, nil
-title.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = frame.Position
-    end
-end)
-UIS.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
-local function refreshStatus()
-    status.Text = string.format(
-        "ride: %s | last: %s\ncash: $%d | pushed: %d | claimed: %d",
-        state.ride and state.ride.Name or "none",
-        state.lastTrick or "none",
-        state.trickCash, state.pushed, state.claimed
-    )
-end
 
 -- ============================================================
 -- HELPERS
@@ -263,216 +77,300 @@ local function currentRide()
     return nil
 end
 
-local function findChassis(model)
-    local seat = model:FindFirstChild("DriveSeat")
-    if seat and seat:IsA("BasePart") then return seat end
-    return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+local function findSeat(ride)
+    local seat = ride and ride:FindFirstChild("DriveSeat")
+    if seat and seat:IsA("VehicleSeat") then return seat end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local s = hum and hum.SeatPart
+    if s and s:IsA("VehicleSeat") then return s end
+    return nil
 end
 
 -- ============================================================
--- AUTO WHEELIE + ASSIST PARKING
+-- AUTO WHEELIE
 -- ============================================================
-local wheelieActive = false
-local wheelieChassis = nil
-local disabledAssists = {}
-local parkedRide = nil
-
-local function restoreAssists()
-    for inst in pairs(disabledAssists) do
-        if inst.Parent then
-            pcall(function() inst.Enabled = true end)
-        end
-    end
-    table.clear(disabledAssists)
-    parkedRide = nil
-end
-
-local function parkAssists(model)
-    if parkedRide ~= model then
-        restoreAssists()
-        parkedRide = model
-        for _, d in ipairs(model:GetDescendants()) do
-            if (d.Name == "Flip" or d.Name == "Kickstand") and (d:IsA("AlignOrientation") or d:IsA("BodyGyro")) then
-                disabledAssists[d] = true
-            end
-        end
-    end
-
-    for inst in pairs(disabledAssists) do
-        if inst.Parent and inst.Enabled then
-            pcall(function() inst.Enabled = false end)
-        end
-    end
-end
-
-local function lockWheelie(model)
-    local chassis = findChassis(model)
-    if not chassis then return end
-    wheelieChassis = chassis
-
-    if state.freeze then
-        local _, yaw, _ = chassis.CFrame:ToOrientation()
-        chassis.CFrame = CFrame.new(chassis.Position) * CFrame.Angles(math.rad(state.angle), yaw, 0)
-        chassis.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-        chassis.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-        chassis.Anchored = true
-        return
-    end
-
-    if chassis.Anchored then
-        chassis.Anchored = false
-    end
-
-    local pitch = math.asin(math.clamp(chassis.CFrame.LookVector.Y, -1, 1))
-    local target = math.rad(state.angle)
-    local err = target - pitch
-    local power = math.clamp(err * 14, -22, 22)
-
-    local right = chassis.CFrame.RightVector
-    local up = chassis.CFrame.UpVector
-    local look = chassis.CFrame.LookVector
-    local av = chassis.AssemblyAngularVelocity
-
-    chassis.AssemblyAngularVelocity = right * power + up * av:Dot(up) + look * av:Dot(look)
-end
-
-local function unlockWheelie()
-    if wheelieChassis then
-        pcall(function()
-            wheelieChassis.Anchored = false
-            wheelieChassis.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-        end)
-        wheelieChassis = nil
-    end
-    if WheelieState then
-        pcall(function() WheelieState:FireServer(false) end)
-    end
-end
-
-local function getTrickInput()
-    local aChassis = playerGui:FindFirstChild("A-Chassis Interface")
-    local riderPhysics = aChassis and aChassis:FindFirstChild("RiderPhysics")
-    return riderPhysics and riderPhysics:FindFirstChild("TrickInput")
-end
-
--- ============================================================
--- AUTO TRICKS (backflip / frontflip / 180 / 360)
--- ============================================================
-local trick = {
+local wheelie = {
     active = false,
-    mode = nil,
-    axis = Vector3.new(0, 0, 0),
-    rate = 0,
-    endsAt = 0,
-    nextAt = 0,
-    hopAt = nil,
+    seat = nil,
+    attach = nil,
+    align = nil,
+    yaw = 0,
 }
 
-local function isGrounded(ride, chassis)
-    local filter = { ride }
-    if LocalPlayer.Character then
-        table.insert(filter, LocalPlayer.Character)
+local function stopWheelie()
+    if wheelie.align then pcall(function() wheelie.align:Destroy() end) end
+    if wheelie.attach then pcall(function() wheelie.attach:Destroy() end) end
+    if wheelie.seat and wheelie.seat.Parent then
+        pcall(function() wheelie.seat.Anchored = false end)
     end
+    wheelie.active = false
+    wheelie.seat = nil
+    wheelie.attach = nil
+    wheelie.align = nil
+    wheelie.yaw = 0
+end
+
+local function startWheelie(seat)
+    stopWheelie()
+    wheelie.active = true
+    wheelie.seat = seat
+    wheelie.yaw = select(2, seat.CFrame:ToOrientation())
+
+    wheelie.attach = Instance.new("Attachment")
+    wheelie.attach.Parent = seat
+
+    wheelie.align = Instance.new("AlignOrientation")
+    wheelie.align.Mode = Enum.OrientationAlignmentMode.OneAttachment
+    wheelie.align.Attachment0 = wheelie.attach
+    wheelie.align.MaxTorque = 10000000
+    wheelie.align.MaxAngularVelocity = 20
+    wheelie.align.Responsiveness = 50
+    wheelie.align.Parent = seat
+end
+
+local function updateWheelie(seat, dt)
+    if not wheelie.align or wheelie.align.Parent ~= seat or wheelie.seat ~= seat then
+        startWheelie(seat)
+    end
+    local steer = seat.SteerFloat or seat.Steer or 0
+    wheelie.yaw = wheelie.yaw - steer * 3.0 * dt
+    wheelie.align.CFrame = CFrame.new(seat.Position)
+        * CFrame.Angles(0, wheelie.yaw, 0)
+        * CFrame.Angles(math.rad(state.angle), 0, 0)
+
+    if state.freeze then
+        seat.Anchored = true
+    elseif seat.Anchored then
+        seat.Anchored = false
+    end
+end
+
+-- ============================================================
+-- AUTO TRICKS (jump + spin / flip cycle)
+-- ============================================================
+local SPIN_JUMP_VELOCITY = 15
+local SPIN_ASCEND_TIME = 0.35
+local SPIN_DESCENT_SPEED = -150
+local SPIN_REPEAT_DELAY = 0.25
+local SPIN_MAX_DESCENT_TIME = 1.5
+local SPIN_GROUND_CHECK_DISTANCE = 3.5
+
+local spin = {
+    phase = "Idle",
+    phaseStart = os.clock(),
+    totalAngle = 0,
+    targetAngle = math.rad(3000),
+    rate = math.rad(3600),
+    mode = "Spin",
+    baseYaw = 0,
+    idleAt = 0,
+    currentBody = nil,
+    attach = nil,
+    align = nil,
+    savedAutoRotate = true,
+    savedPlatformStand = false,
+    cycleSeated = false,
+}
+
+local function setSpinPhase(name)
+    spin.phase = name
+    spin.phaseStart = os.clock()
+end
+
+local function getSpinParts()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not hum or not root or hum.Health <= 0 then return nil end
+    local seat = hum.SeatPart
+    local body = root
+    local vehicle = nil
+    if seat then
+        body = seat.AssemblyRootPart or seat
+        vehicle = seat:FindFirstAncestorOfClass("Model")
+    end
+    return char, hum, root, body, vehicle, seat
+end
+
+local function removeSpinAligner()
+    if spin.align then pcall(function() spin.align:Destroy() end) end
+    if spin.attach then pcall(function() spin.attach:Destroy() end) end
+    spin.align = nil
+    spin.attach = nil
+    spin.currentBody = nil
+end
+
+local function setSpinOrientation(body, angle)
+    if not body or not body.Parent then return end
+    if spin.currentBody ~= body then
+        removeSpinAligner()
+        spin.currentBody = body
+        spin.attach = Instance.new("Attachment")
+        spin.attach.Parent = body
+        spin.align = Instance.new("AlignOrientation")
+        spin.align.Mode = Enum.OrientationAlignmentMode.OneAttachment
+        spin.align.Attachment0 = spin.attach
+        spin.align.Responsiveness = 300
+        spin.align.MaxTorque = 1e9
+        spin.align.MaxAngularVelocity = 1e6
+        spin.align.Parent = body
+    end
+
+    if spin.mode == "Backflip" or spin.mode == "Frontflip" then
+        spin.align.CFrame = CFrame.Angles(0, spin.baseYaw, 0) * CFrame.Angles(angle, 0, 0)
+    else
+        spin.align.CFrame = CFrame.Angles(0, angle, 0)
+    end
+end
+
+local function setSpinVelocity(body, y)
+    if body and body.Parent then
+        body.AssemblyLinearVelocity = Vector3.new(0, y, 0)
+    end
+end
+
+local function isSpinGrounded(char, body, vehicle)
+    local filter = { char }
+    if vehicle then table.insert(filter, vehicle) end
+    if body and body.Parent then table.insert(filter, body) end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = filter
-    local hit = workspace:Raycast(chassis.Position, Vector3.new(0, -7, 0), params)
-    return hit ~= nil
+    return workspace:Raycast(body.Position, Vector3.new(0, -SPIN_GROUND_CHECK_DISTANCE, 0), params) ~= nil
 end
 
-local function startTrick(ride, chassis)
-    if trick.active then return end
-
-    if wheelieActive then
-        wheelieActive = false
-        unlockWheelie()
+local function releaseSpin(hum, body)
+    removeSpinAligner()
+    if hum and not spin.cycleSeated then
+        hum.AutoRotate = spin.savedAutoRotate
+        hum.PlatformStand = spin.savedPlatformStand
     end
-
-    local roll = math.random()
-    local mode, rate, duration
-    if roll < 0.40 then
-        mode, rate, duration = "Backflip", 12, 0.58
-    elseif roll < 0.60 then
-        mode, rate, duration = "Frontflip", -12, 0.58
-    elseif roll < 0.85 then
-        mode, rate, duration = "360 Spin", 11, 0.60
-    else
-        mode, rate, duration = "180 Spin", 10, 0.34
+    if body and body.Parent then
+        body.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        body.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
     end
-
-    trick.active = true
-    trick.mode = mode
-    trick.rate = rate
-    trick.endsAt = os.clock() + duration
-
-    if mode == "Backflip" or mode == "Frontflip" then
-        trick.axis = chassis.CFrame.RightVector
-    else
-        trick.axis = chassis.CFrame.UpVector
-    end
-
-    local ti = getTrickInput()
-    if ti then
-        pcall(function() ti:Fire(mode, true) end)
-    end
+    spin.cycleSeated = false
 end
 
-local function stopTrick()
-    trick.active = false
-    trick.mode = nil
-    trick.hopAt = nil
-    trick.nextAt = os.clock() + 2.2
+local function resetSpin()
+    spin.phase = "Idle"
+    spin.totalAngle = 0
+    removeSpinAligner()
+end
 
-    local ride = state.ride
-    if ride then
-        local chassis = findChassis(ride)
-        if chassis then
-            chassis.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+local function stopSpin()
+    local _, hum, _, body = getSpinParts()
+    releaseSpin(hum, body or spin.currentBody)
+    resetSpin()
+    spin.idleAt = 0
+end
+
+local function chooseTrickMode()
+    local mode = state.trickMode
+    if mode == "Random" then
+        local roll = math.random()
+        if roll < 0.50 then
+            mode = "Spin"
+        elseif roll < 0.70 then
+            mode = "Backflip"
+        elseif roll < 0.85 then
+            mode = "Frontflip"
+        else
+            mode = "180"
         end
     end
+    return mode
 end
 
-local function updateTricks(ride)
-    if not state.tricks or not ride or state.fly then return end
-    local chassis = findChassis(ride)
-    if not chassis then return end
+local function startSpinCycle()
+    local char, hum, _, body, _, seat = getSpinParts()
+    if not char then return false end
+
+    spin.cycleSeated = seat ~= nil
+    if not spin.cycleSeated then
+        spin.savedAutoRotate = hum.AutoRotate
+        spin.savedPlatformStand = hum.PlatformStand
+        hum.AutoRotate = false
+        hum.PlatformStand = true
+    end
+
+    spin.mode = chooseTrickMode()
+    spin.totalAngle = 0
+    spin.baseYaw = select(2, body.CFrame:ToOrientation())
+
+    if spin.mode == "Spin" then
+        spin.targetAngle = math.rad(3000)
+        spin.rate = math.rad(3600)
+    elseif spin.mode == "Backflip" then
+        spin.targetAngle = math.rad(360)
+        spin.rate = math.rad(720)
+    elseif spin.mode == "Frontflip" then
+        spin.targetAngle = math.rad(-360)
+        spin.rate = math.rad(-720)
+    else
+        spin.targetAngle = math.rad(180)
+        spin.rate = math.rad(900)
+    end
+
+    setSpinOrientation(body, 0)
+    setSpinVelocity(body, SPIN_JUMP_VELOCITY)
+    setSpinPhase("Ascend")
+    return true
+end
+
+local function updateSpin(dt)
+    if not state.tricks or state.fly then
+        if spin.phase ~= "Idle" then stopSpin() end
+        return
+    end
+    if state.wheelie then
+        if spin.phase ~= "Idle" then stopSpin() end
+        return
+    end
+
+    local char, hum, _, body, vehicle = getSpinParts()
+    if not char then
+        if spin.phase ~= "Idle" then
+            releaseSpin(nil, spin.currentBody)
+            resetSpin()
+        end
+        return
+    end
 
     local now = os.clock()
+    local elapsed = now - spin.phaseStart
 
-    if trick.active then
-        if now < trick.endsAt then
-            chassis.AssemblyAngularVelocity = trick.axis * trick.rate
-        else
-            stopTrick()
+    if spin.phase == "Idle" then
+        if now - spin.idleAt >= SPIN_REPEAT_DELAY then
+            startSpinCycle()
         end
-        return
-    end
-
-    if trick.hopAt then
-        if now >= trick.hopAt then
-            trick.hopAt = nil
-            if not isGrounded(ride, chassis) then
-                startTrick(ride, chassis)
-            else
-                trick.nextAt = now + 0.6
-            end
+    elseif spin.phase == "Ascend" then
+        setSpinVelocity(body, SPIN_JUMP_VELOCITY)
+        setSpinOrientation(body, 0)
+        if elapsed >= SPIN_ASCEND_TIME then setSpinPhase("Spin") end
+    elseif spin.phase == "Spin" then
+        setSpinVelocity(body, 0)
+        spin.totalAngle = spin.totalAngle + spin.rate * dt
+        if math.abs(spin.totalAngle) >= math.abs(spin.targetAngle) then
+            spin.totalAngle = spin.targetAngle
+            setSpinPhase("Descend")
         end
-        return
-    end
-
-    if now < trick.nextAt then return end
-
-    if not isGrounded(ride, chassis) then
-        startTrick(ride, chassis)
-        return
-    end
-
-    if UIS:IsKeyDown(Enum.KeyCode.W) then
-        local v = chassis.AssemblyLinearVelocity
-        local flat = Vector3.new(v.X, 0, v.Z)
-        if flat.Magnitude > 8 then
-            chassis.AssemblyLinearVelocity = Vector3.new(v.X, 72, v.Z)
-            trick.hopAt = now + 0.16
+        setSpinOrientation(body, spin.totalAngle)
+    elseif spin.phase == "Descend" then
+        setSpinVelocity(body, SPIN_DESCENT_SPEED)
+        setSpinOrientation(body, spin.targetAngle)
+        if isSpinGrounded(char, body, vehicle) or elapsed >= SPIN_MAX_DESCENT_TIME then
+            setSpinPhase("Landed")
+        end
+    elseif spin.phase == "Landed" then
+        setSpinVelocity(body, 0)
+        if elapsed >= 0.05 then
+            releaseSpin(hum, body)
+            spin.totalAngle = 0
+            spin.idleAt = now
+            setSpinPhase("Idle")
         end
     end
 end
@@ -482,7 +380,7 @@ if TrickState then
         if kind == "landed" then
             if name then state.lastTrick = name end
             if type(amount) == "number" and amount > 0 then
-                state.trickCash = state.trickCash + amount
+                state.cash = state.cash + amount
             end
         elseif kind == "air" or kind == "landing" then
             if name then state.lastTrick = name end
@@ -491,7 +389,7 @@ if TrickState then
 end
 
 -- ============================================================
--- POLICE PUSH + ESP
+-- POLICE PUSH
 -- ============================================================
 local ragdoll
 pcall(function()
@@ -655,7 +553,7 @@ local function updatePoliceEsp()
 end
 
 -- ============================================================
--- ANTI-POLICE HOOK
+-- POLICEHIT HOOK
 -- ============================================================
 local hookMt, hookOld, hookOn = nil, nil, false
 
@@ -711,17 +609,18 @@ local function applySpeed()
         end
     end
 
-    if (state.speed or state.uncap) and hum.SeatPart and not state.fly then
-        local ride = currentRide()
-        if ride then
-            local chassis = findChassis(ride)
-            if chassis then
-                local v = chassis.AssemblyLinearVelocity
-                local look = chassis.CFrame.LookVector
+    if (state.speed or state.uncap) and hum.SeatPart and not state.fly and not state.tricks then
+        local seat = hum.SeatPart
+        if seat and seat:IsA("VehicleSeat") then
+            local throttle = seat.ThrottleFloat or seat.Throttle or 0
+            if throttle > 0 then
+                local target = state.uncap and math.min(state.rideSpeed * 4, 1500) or state.rideSpeed
+                local body = seat.AssemblyRootPart or seat
+                local v = body.AssemblyLinearVelocity
+                local look = seat.CFrame.LookVector
                 local flat = Vector3.new(look.X, 0, look.Z)
-                if flat.Magnitude > 0.1 and UIS:IsKeyDown(Enum.KeyCode.W) then
-                    local target = state.uncap and math.min(state.rideSpeed * 4, 2000) or state.rideSpeed
-                    chassis.AssemblyLinearVelocity = flat.Unit * target + Vector3.new(0, v.Y, 0)
+                if flat.Magnitude > 0.1 then
+                    body.AssemblyLinearVelocity = flat.Unit * target + Vector3.new(0, v.Y, 0)
                 end
             end
         end
@@ -729,7 +628,7 @@ local function applySpeed()
 end
 
 -- ============================================================
--- CFLY (CFRAME FLY)
+-- CFRAME FLY
 -- ============================================================
 local flyPos, flyHum = nil, nil
 local flySavedParts = {}
@@ -831,7 +730,7 @@ local function applyDesync()
                     local sc = getcallingscript and getcallingscript()
                     return sc and sc.Name
                 end)
-                if ok and name == "CameraModule" then
+                if ok and (name == "CameraModule" or name == "FirstPersonCamera") then
                     return value * CFrame.Angles(0, math.rad(90), 0)
                 end
             end
@@ -867,41 +766,712 @@ local function claimRewards()
 end
 
 -- ============================================================
+-- MATCHA-STYLE UI
+-- ============================================================
+local ACCENT = Color3.fromRGB(72, 132, 255)
+local BG = Color3.fromRGB(23, 23, 31)
+local PANEL = Color3.fromRGB(27, 28, 39)
+local PANEL2 = Color3.fromRGB(35, 37, 49)
+local BORDER = Color3.fromRGB(40, 42, 56)
+local TEXT = Color3.fromRGB(236, 236, 244)
+local LABEL = Color3.fromRGB(122, 131, 165)
+local MUTED = Color3.fromRGB(88, 94, 120)
+local FONT = Enum.Font.Gotham
+local FONT_MED = Enum.Font.GothamMedium
+local FONT_BOLD = Enum.Font.GothamBold
+
+local function new(class, props, parent)
+    local inst = Instance.new(class)
+    for k, v in pairs(props or {}) do
+        inst[k] = v
+    end
+    if parent then inst.Parent = parent end
+    return inst
+end
+
+local old = playerGui:FindFirstChild("PulsarKukirin")
+if old then old:Destroy() end
+
+local gui = new("ScreenGui", {
+    Name = "PulsarKukirin",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    DisplayOrder = 999,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+}, playerGui)
+
+local cam = workspace.CurrentCamera or workspace:WaitForChild("CurrentCamera")
+local vp = cam.ViewportSize
+local WIN_W, WIN_H = 660, 470
+
+local glow = new("Frame", {
+    Size = UDim2.fromOffset(WIN_W + 14, WIN_H + 14),
+    Position = UDim2.fromOffset(math.floor((vp.X - WIN_W) / 2) - 7, math.floor((vp.Y - WIN_H) / 2) - 7),
+    BackgroundColor3 = ACCENT,
+    BackgroundTransparency = 0.90,
+    BorderSizePixel = 0,
+    ZIndex = 0,
+}, gui)
+new("UICorner", { CornerRadius = UDim.new(0, 22) }, glow)
+
+local win = new("Frame", {
+    Size = UDim2.fromOffset(WIN_W, WIN_H),
+    Position = UDim2.fromOffset(math.floor((vp.X - WIN_W) / 2), math.floor((vp.Y - WIN_H) / 2)),
+    BackgroundColor3 = BG,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Active = true,
+    ZIndex = 1,
+}, gui)
+new("UICorner", { CornerRadius = UDim.new(0, 16) }, win)
+new("UIStroke", { Color = BORDER, Thickness = 1 }, win)
+
+local uiScale = new("UIScale", {}, win)
+local function fitScale()
+    local size = cam.ViewportSize
+    local s = math.min(1, (size.X - 40) / WIN_W, (size.Y - 40) / WIN_H)
+    uiScale.Scale = math.clamp(s, 0.6, 1)
+end
+fitScale()
+cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    pcall(fitScale)
+end)
+
+-- top accent line
+new("Frame", {
+    Size = UDim2.new(1, 0, 0, 2),
+    BackgroundColor3 = ACCENT,
+    BackgroundTransparency = 0.45,
+    BorderSizePixel = 0,
+    ZIndex = 2,
+}, win)
+
+-- header / drag strip
+local header = new("Frame", {
+    Size = UDim2.new(1, 0, 0, 56),
+    BackgroundTransparency = 1,
+    Active = true,
+    ZIndex = 3,
+}, win)
+
+local logoDot = new("Frame", {
+    Position = UDim2.fromOffset(20, 20),
+    Size = UDim2.fromOffset(6, 6),
+    BackgroundColor3 = ACCENT,
+    BorderSizePixel = 0,
+}, header)
+new("UICorner", { CornerRadius = UDim.new(1, 0) }, logoDot)
+
+local logo = new("TextLabel", {
+    Position = UDim2.fromOffset(32, 12),
+    Size = UDim2.new(0, 240, 0, 22),
+    BackgroundTransparency = 1,
+    Font = FONT_BOLD,
+    TextSize = 16,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    RichText = true,
+    Text = '<font color="#ffffff">PULSAR</font><font color="#4884ff">.ONE</font>',
+    ZIndex = 4,
+}, header)
+
+local subtitle = new("TextLabel", {
+    Position = UDim2.fromOffset(34, 34),
+    Size = UDim2.new(0, 260, 0, 14),
+    BackgroundTransparency = 1,
+    Font = FONT_MED,
+    TextSize = 9,
+    TextColor3 = LABEL,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "KUKIRIN LIFE",
+    ZIndex = 4,
+}, header)
+
+local close = new("TextButton", {
+    Position = UDim2.new(1, -36, 0, 14),
+    Size = UDim2.fromOffset(22, 22),
+    BackgroundTransparency = 1,
+    Font = FONT_MED,
+    TextSize = 18,
+    TextColor3 = MUTED,
+    Text = "x",
+    ZIndex = 4,
+}, header)
+close.MouseButton1Click:Connect(function() win.Visible = false end)
+
+local dragStart, startPos = nil, nil
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragStart = input.Position
+        startPos = win.Position
+    end
+end)
+UIS.InputChanged:Connect(function(input)
+    if dragStart and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        local nx = startPos.X.Offset + delta.X
+        local ny = startPos.Y.Offset + delta.Y
+        local size = cam.ViewportSize
+        nx = math.clamp(nx, 8, math.max(8, size.X - win.AbsoluteSize.X - 8))
+        ny = math.clamp(ny, 8, math.max(8, size.Y - win.AbsoluteSize.Y - 8))
+        win.Position = UDim2.fromOffset(nx, ny)
+    end
+end)
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragStart = nil
+    end
+end)
+
+-- navigation
+local nav = new("Frame", {
+    Position = UDim2.fromOffset(18, 58),
+    Size = UDim2.new(1, -36, 0, 32),
+    BackgroundTransparency = 1,
+    ZIndex = 3,
+}, win)
+
+new("Frame", {
+    Position = UDim2.new(0, 0, 0, 31),
+    Size = UDim2.new(1, 0, 0, 1),
+    BackgroundColor3 = BORDER,
+    BackgroundTransparency = 0.25,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+}, nav)
+
+local tabButtons = {}
+local tabFrames = {}
+local tabOrder = { "ride", "visuals", "movement", "misc" }
+local tabLabels = { "RIDE", "VISUALS", "MOVEMENT", "MISC" }
+local activeTab = "ride"
+
+local content = new("Frame", {
+    Position = UDim2.fromOffset(16, 96),
+    Size = UDim2.new(1, -32, 1, -142),
+    BackgroundTransparency = 1,
+    ZIndex = 3,
+}, win)
+
+local function makeTab(name)
+    local f = new("Frame", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Visible = (name == activeTab),
+        ZIndex = 3,
+    }, content)
+    tabFrames[name] = f
+    return f
+end
+
+local function switchTab(name)
+    activeTab = name
+    for k, f in pairs(tabFrames) do
+        f.Visible = (k == name)
+    end
+    for k, b in pairs(tabButtons) do
+        b.TextColor3 = (k == name) and TEXT or LABEL
+        b.Underline.Visible = (k == name)
+    end
+end
+
+for i, name in ipairs(tabOrder) do
+    local b = new("TextButton", {
+        Position = UDim2.fromOffset((i - 1) * 88, 0),
+        Size = UDim2.fromOffset(80, 31),
+        BackgroundTransparency = 1,
+        Font = FONT_MED,
+        TextSize = 10,
+        TextColor3 = (name == activeTab) and TEXT or LABEL,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = tabLabels[i],
+        ZIndex = 4,
+    }, nav)
+    local ul = new("Frame", {
+        Position = UDim2.fromOffset(0, 29),
+        Size = UDim2.fromOffset(28, 2),
+        BackgroundColor3 = ACCENT,
+        BorderSizePixel = 0,
+        Visible = (name == activeTab),
+        ZIndex = 5,
+    }, b)
+    b.Underline = ul
+    b.MouseButton1Click:Connect(function() switchTab(name) end)
+    tabButtons[name] = b
+end
+
+local rideTab = makeTab("ride")
+local visualsTab = makeTab("visuals")
+local movementTab = makeTab("movement")
+local miscTab = makeTab("misc")
+
+-- widgets
+local toggleWidgets = {}
+local statusLabels = {}
+
+local function setToggle(key, value)
+    local w = toggleWidgets[key]
+    if w then
+        if state[key] ~= value then w.apply(value) end
+    else
+        state[key] = value
+    end
+end
+
+local function makePanel(parent, title, x, y, w, h)
+    local p = new("Frame", {
+        Position = UDim2.fromOffset(x, y),
+        Size = UDim2.fromOffset(w, h),
+        BackgroundColor3 = PANEL,
+        BorderSizePixel = 0,
+        ZIndex = 3,
+    }, parent)
+    new("UICorner", { CornerRadius = UDim.new(0, 12) }, p)
+    new("UIStroke", { Color = BORDER, Thickness = 1 }, p)
+
+    local bar = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundTransparency = 1,
+        ZIndex = 4,
+    }, p)
+    new("TextLabel", {
+        Position = UDim2.fromOffset(12, 0),
+        Size = UDim2.new(1, -24, 1, 0),
+        BackgroundTransparency = 1,
+        Font = FONT_BOLD,
+        TextSize = 11,
+        TextColor3 = ACCENT,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = title,
+        ZIndex = 5,
+    }, bar)
+    new("Frame", {
+        Position = UDim2.fromOffset(0, 29),
+        Size = UDim2.new(1, 0, 0, 1),
+        BackgroundColor3 = ACCENT,
+        BackgroundTransparency = 0.72,
+        BorderSizePixel = 0,
+        ZIndex = 4,
+    }, p)
+
+    return new("Frame", {
+        Position = UDim2.fromOffset(10, 38),
+        Size = UDim2.new(1, -20, 1, -46),
+        BackgroundTransparency = 1,
+        ZIndex = 4,
+    }, p)
+end
+
+local function makeToggle(parent, key, label, y, onChange)
+    local row = new("TextButton", {
+        Position = UDim2.fromOffset(0, y),
+        Size = UDim2.new(1, 0, 0, 28),
+        BackgroundTransparency = 1,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 5,
+    }, parent)
+
+    local lab = new("TextLabel", {
+        Size = UDim2.new(1, -56, 1, 0),
+        BackgroundTransparency = 1,
+        Font = FONT,
+        TextSize = 11,
+        TextColor3 = LABEL,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = label,
+        ZIndex = 5,
+    }, row)
+
+    local pill = new("Frame", {
+        Position = UDim2.new(1, -38, 0, 5),
+        Size = UDim2.fromOffset(34, 18),
+        BackgroundColor3 = PANEL2,
+        BorderSizePixel = 0,
+        ZIndex = 5,
+    }, row)
+    new("UICorner", { CornerRadius = UDim.new(1, 0) }, pill)
+
+    local knob = new("Frame", {
+        Position = UDim2.fromOffset(2, 2),
+        Size = UDim2.fromOffset(14, 14),
+        BackgroundColor3 = TEXT,
+        BorderSizePixel = 0,
+        ZIndex = 6,
+    }, pill)
+    new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+
+    local function apply(on)
+        state[key] = on
+        pill.BackgroundColor3 = on and ACCENT or PANEL2
+        lab.TextColor3 = on and TEXT or LABEL
+        TweenService:Create(knob, TweenInfo.new(0.12), {
+            Position = UDim2.fromOffset(on and 18 or 2, 2),
+        }):Play()
+    end
+
+    local function flip()
+        local on = not state[key]
+        apply(on)
+        if onChange then onChange(on) end
+    end
+
+    row.MouseButton1Click:Connect(flip)
+    toggleWidgets[key] = { apply = apply, flip = flip }
+    apply(state[key])
+end
+
+local function makeSlider(parent, key, label, minimum, maximum, step, y, fmt)
+    local row = new("Frame", {
+        Position = UDim2.fromOffset(0, y),
+        Size = UDim2.new(1, 0, 0, 38),
+        BackgroundTransparency = 1,
+        ZIndex = 5,
+    }, parent)
+
+    new("TextLabel", {
+        Size = UDim2.new(1, -60, 0, 16),
+        BackgroundTransparency = 1,
+        Font = FONT,
+        TextSize = 11,
+        TextColor3 = LABEL,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = label,
+        ZIndex = 5,
+    }, row)
+
+    local valueLabel = new("TextLabel", {
+        Position = UDim2.new(1, -60, 0, 0),
+        Size = UDim2.fromOffset(60, 16),
+        BackgroundTransparency = 1,
+        Font = FONT,
+        TextSize = 10,
+        TextColor3 = TEXT,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Text = "",
+        ZIndex = 5,
+    }, row)
+
+    local track = new("Frame", {
+        Position = UDim2.fromOffset(0, 22),
+        Size = UDim2.new(1, 0, 0, 4),
+        BackgroundColor3 = PANEL2,
+        BorderSizePixel = 0,
+        ZIndex = 5,
+    }, row)
+    new("UICorner", { CornerRadius = UDim.new(1, 0) }, track)
+
+    local fill = new("Frame", {
+        Size = UDim2.new(0, 0, 1, 0),
+        BackgroundColor3 = ACCENT,
+        BorderSizePixel = 0,
+        ZIndex = 6,
+    }, track)
+    new("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+
+    local knob = new("Frame", {
+        Size = UDim2.fromOffset(10, 10),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0, 0, 0.5, 0),
+        BackgroundColor3 = TEXT,
+        BorderSizePixel = 0,
+        ZIndex = 7,
+    }, track)
+    new("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+
+    local hit = new("TextButton", {
+        Position = UDim2.fromOffset(0, 13),
+        Size = UDim2.new(1, 0, 0, 24),
+        BackgroundTransparency = 1,
+        Text = "",
+        ZIndex = 8,
+    }, row)
+
+    local function setValue(v)
+        v = math.clamp(v, minimum, maximum)
+        if step and step > 0 then
+            v = math.floor(v / step + 0.5) * step
+        end
+        state[key] = v
+        local rel = (v - minimum) / (maximum - minimum)
+        fill.Size = UDim2.new(rel, 0, 1, 0)
+        knob.Position = UDim2.new(rel, 0, 0.5, 0)
+        valueLabel.Text = string.format(fmt or "%.0f", v)
+    end
+
+    local function seek(input)
+        local rel = math.clamp((input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
+        setValue(minimum + rel * (maximum - minimum))
+    end
+
+    hit.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            seek(input)
+            local moveConn
+            local endConn
+            moveConn = UIS.InputChanged:Connect(function(m)
+                if m.UserInputType == Enum.UserInputType.MouseMovement or m.UserInputType == Enum.UserInputType.Touch then
+                    seek(m)
+                end
+            end)
+            endConn = UIS.InputEnded:Connect(function(e)
+                if e.UserInputType == Enum.UserInputType.MouseButton1 or e.UserInputType == Enum.UserInputType.Touch then
+                    if moveConn then moveConn:Disconnect() end
+                    if endConn then endConn:Disconnect() end
+                end
+            end)
+        end
+    end)
+
+    setValue(state[key] or minimum)
+    return { set = setValue }
+end
+
+local function makeInfo(parent, y, h, text)
+    return new("TextLabel", {
+        Position = UDim2.fromOffset(0, y),
+        Size = UDim2.new(1, 0, 0, h),
+        BackgroundTransparency = 1,
+        Font = FONT,
+        TextSize = 10,
+        TextColor3 = MUTED,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        TextWrapped = true,
+        Text = text,
+        ZIndex = 5,
+    }, parent)
+end
+
+local function makeButton(parent, label, y, callback)
+    local b = new("TextButton", {
+        Position = UDim2.fromOffset(0, y),
+        Size = UDim2.new(1, 0, 0, 24),
+        BackgroundColor3 = PANEL2,
+        BorderSizePixel = 0,
+        Font = FONT_MED,
+        TextSize = 10,
+        TextColor3 = TEXT,
+        Text = label,
+        ZIndex = 5,
+    }, parent)
+    new("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
+    b.MouseEnter:Connect(function() b.BackgroundColor3 = Color3.fromRGB(44, 47, 62) end)
+    b.MouseLeave:Connect(function() b.BackgroundColor3 = PANEL2 end)
+    if callback then b.MouseButton1Click:Connect(callback) end
+    return b
+end
+
+local TRICK_MODES = { "Random", "Spin", "Backflip", "Frontflip", "180" }
+
+local function makeModeButton(parent, y)
+    new("TextLabel", {
+        Position = UDim2.fromOffset(0, y),
+        Size = UDim2.new(1, -110, 0, 24),
+        BackgroundTransparency = 1,
+        Font = FONT,
+        TextSize = 11,
+        TextColor3 = LABEL,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = "Mode",
+        ZIndex = 5,
+    }, parent)
+
+    local b = new("TextButton", {
+        Position = UDim2.new(1, -104, y, 0),
+        Size = UDim2.fromOffset(104, 22),
+        BackgroundColor3 = PANEL2,
+        BorderSizePixel = 0,
+        Font = FONT_MED,
+        TextSize = 10,
+        TextColor3 = TEXT,
+        Text = state.trickMode,
+        ZIndex = 5,
+    }, parent)
+    new("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
+
+    b.MouseButton1Click:Connect(function()
+        local idx = 1
+        for i, m in ipairs(TRICK_MODES) do
+            if m == state.trickMode then idx = i; break end
+        end
+        state.trickMode = TRICK_MODES[idx % #TRICK_MODES + 1]
+        b.Text = state.trickMode
+    end)
+end
+
+-- RIDE TAB
+local wc = makePanel(rideTab, "AUTO WHEELIE", 0, 0, 308, 170)
+makeToggle(wc, "wheelie", "Enable", 0, function(on)
+    if on then
+        setToggle("tricks", false)
+        stopSpin()
+    end
+end)
+makeSlider(wc, "angle", "Angle", -80, 80, 1, 32, "%.0f deg")
+makeToggle(wc, "freeze", "Freeze position", 76)
+
+local tc = makePanel(rideTab, "AUTO TRICKS", 320, 0, 308, 170)
+makeToggle(tc, "tricks", "Enable", 0, function(on)
+    if on then
+        setToggle("wheelie", false)
+        stopWheelie()
+    end
+end)
+makeModeButton(tc, 32)
+makeInfo(tc, 64, 54, "Jumps and spins for trick cash. Mode cycles above.")
+
+local rsPanel = makePanel(rideTab, "RIDE STATUS", 0, 182, 628, 120)
+local rideStatus = makeInfo(rsPanel, 0, 70, "waiting...")
+table.insert(statusLabels, rideStatus)
+
+-- VISUALS TAB
+local pe = makePanel(visualsTab, "POLICE ESP", 0, 0, 308, 170)
+makeToggle(pe, "policeEsp", "Enable", 0)
+makeInfo(pe, 34, 80, "Red highlight + POLICE tag on Workspace.PoliceNPCs.")
+
+local pp = makePanel(visualsTab, "POLICE PUSH", 320, 0, 308, 170)
+makeToggle(pp, "antiPolice", "Enable", 0)
+makeInfo(pp, 34, 80, "Launches police cars away, disables their touch and blocks PoliceHit.")
+
+local vn = makePanel(visualsTab, "NOTES", 0, 182, 628, 120)
+makeInfo(vn, 0, 70, "Police push is client-side. Server AI still exists, but police cars cannot touch you locally.")
+
+-- MOVEMENT TAB
+local sp = makePanel(movementTab, "SPEED", 0, 0, 308, 190)
+makeToggle(sp, "speed", "Speed boost", 0)
+makeToggle(sp, "uncap", "Speed uncap", 32)
+makeSlider(sp, "rideSpeed", "Ride speed", 30, 300, 5, 64, "%.0f")
+makeInfo(sp, 106, 36, "Hold throttle to apply.")
+
+local fl = makePanel(movementTab, "FLIGHT", 320, 0, 308, 190)
+makeToggle(fl, "fly", "CFrame fly", 0, function(on)
+    if on then
+        setToggle("wheelie", false)
+        setToggle("tricks", false)
+        stopWheelie()
+        stopSpin()
+    end
+end)
+makeSlider(fl, "flySpeed", "Fly speed", 10, 500, 5, 32, "%.0f")
+makeInfo(fl, 74, 70, "WASD + Space/Ctrl. Camera-relative CFrame movement.")
+
+local ds = makePanel(movementTab, "DESYNC", 0, 202, 628, 110)
+makeToggle(ds, "desync", "Enable", 0)
+makeInfo(ds, 34, 28, "CameraModule / FirstPersonCamera sees a 90-degree rotated root.")
+
+-- MISC TAB
+local rw = makePanel(miscTab, "REWARDS", 0, 0, 308, 170)
+makeToggle(rw, "claims", "Auto claim", 0)
+makeButton(rw, "Claim now", 34, function() claimRewards() end)
+makeInfo(rw, 72, 46, "Daily, quests and achievements.")
+
+local cfg = makePanel(miscTab, "CONFIG", 320, 0, 308, 170)
+local restoreBtn = makeButton(cfg, "Restore hooks / stop", 0, nil)
+makeInfo(cfg, 38, 80, "F6 or Insert hides. Drag the header. Pulsar.One for Kukirin Life.")
+
+local st = makePanel(miscTab, "STATUS", 0, 182, 628, 120)
+local miscStatus = makeInfo(st, 0, 70, "waiting...")
+table.insert(statusLabels, miscStatus)
+
+-- FOOTER
+local footer = new("Frame", {
+    Position = UDim2.new(0, 0, 1, -34),
+    Size = UDim2.new(1, 0, 0, 34),
+    BackgroundTransparency = 1,
+    ZIndex = 3,
+}, win)
+new("Frame", {
+    Position = UDim2.fromOffset(0, 0),
+    Size = UDim2.new(1, 0, 0, 1),
+    BackgroundColor3 = BORDER,
+    BackgroundTransparency = 0.25,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+}, footer)
+
+local footLeft = new("TextLabel", {
+    Position = UDim2.fromOffset(18, 0),
+    Size = UDim2.new(0.72, 0, 1, 0),
+    BackgroundTransparency = 1,
+    Font = FONT,
+    TextSize = 10,
+    TextColor3 = LABEL,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "loading...",
+    ZIndex = 4,
+}, footer)
+table.insert(statusLabels, footLeft)
+
+local footRight = new("TextLabel", {
+    Position = UDim2.new(0.72, 0, 0, 0),
+    Size = UDim2.new(0.28, -18, 1, 0),
+    BackgroundTransparency = 1,
+    Font = FONT,
+    TextSize = 10,
+    TextColor3 = MUTED,
+    TextXAlignment = Enum.TextXAlignment.Right,
+    Text = "Pulsar.One · F6",
+    ZIndex = 4,
+}, footer)
+
+local function refreshStatus()
+    local text = string.format(
+        "ride: %s   ·   cash: $%d   ·   last: %s",
+        state.ride and state.ride.Name or "none",
+        state.cash,
+        state.lastTrick or "none"
+    )
+    for _, label in ipairs(statusLabels) do
+        if label.Parent then label.Text = text end
+    end
+    footRight.Text = string.format("pushed %d · claimed %d · F6", state.pushed, state.claimed)
+end
+
+-- ============================================================
+-- RESTORE
+-- ============================================================
+local function restoreAll()
+    stopWheelie()
+    stopSpin()
+    stopFly()
+    removeDesync()
+    removeHook()
+    for key in pairs(toggleWidgets) do
+        setToggle(key, false)
+    end
+    refreshStatus()
+end
+restoreBtn.MouseButton1Click:Connect(restoreAll)
+
+-- ============================================================
 -- LOOPS
 -- ============================================================
 local lastEsp, lastClaim, lastStatus = 0, 0, 0
 
-RunService.Heartbeat:Connect(function()
+RunService.Heartbeat:Connect(function(dt)
     pcall(function()
         local ride = currentRide()
         state.ride = ride
 
-        if state.tricks and ride then
-            updateTricks(ride)
-        end
-
-        local needPark = (state.wheelie and ride) or (state.tricks and trick.active)
-        if needPark and ride then
-            parkAssists(ride)
-        else
-            restoreAssists()
-        end
-
-        if state.wheelie and ride and not (state.tricks and trick.active) then
-            if not wheelieActive then
-                wheelieActive = true
-                local ti = getTrickInput()
-                if ti then pcall(function() ti:Fire("Wheelie", true) end) end
-                if WheelieState then pcall(function() WheelieState:FireServer(true) end) end
+        -- wheelie
+        if state.wheelie and ride and not state.tricks and not state.fly then
+            local seat = findSeat(ride)
+            if seat then
+                if not wheelie.active or wheelie.seat ~= seat then startWheelie(seat) end
+                updateWheelie(seat, dt)
             end
-            lockWheelie(ride)
-        elseif wheelieActive then
-            wheelieActive = false
-            unlockWheelie()
-            local ti = getTrickInput()
-            if ti then pcall(function() ti:Fire("Wheelie", false) end) end
+        elseif wheelie.active then
+            stopWheelie()
         end
 
+        -- tricks
+        if state.tricks and not state.fly then
+            updateSpin(dt)
+        elseif spin.phase ~= "Idle" then
+            stopSpin()
+        end
+
+        -- police push
         if state.antiPolice then
             if not hookOn then installHook() end
             if os.clock() - lastPush > 0.08 then
@@ -914,32 +1484,40 @@ RunService.Heartbeat:Connect(function()
                 if ragdoll then pcall(function() ragdoll.release() end) end
                 pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
             end
+        elseif hookOn then
+            removeHook()
         end
 
+        -- police esp
         if os.clock() - lastEsp > 1 then
             lastEsp = os.clock()
             updatePoliceEsp()
         end
 
+        -- claims
         if state.claims and os.clock() - lastClaim > 5 then
             lastClaim = os.clock()
             claimRewards()
         end
 
+        -- speed
         applySpeed()
 
+        -- desync
         if state.desync then
             if not desyncState then applyDesync() end
         elseif desyncState then
             removeDesync()
         end
 
+        -- fly start/stop
         if state.fly then
             if not flyPos then startFly() end
         elseif flyPos then
             stopFly()
         end
 
+        -- status
         if os.clock() - lastStatus > 0.25 then
             lastStatus = os.clock()
             refreshStatus()
@@ -951,39 +1529,25 @@ RunService.RenderStepped:Connect(function(dt)
     if state.fly then pcall(updateFly, dt) end
 end)
 
-restore.MouseButton1Click:Connect(function()
-    removeHook()
-    removeDesync()
-    if flyPos then stopFly() end
-    if wheelieActive then
-        wheelieActive = false
-        unlockWheelie()
-    end
-    if trick.active then stopTrick() end
-    restoreAssists()
-    for k in pairs(state) do
-        if type(state[k]) == "boolean" then state[k] = false end
-    end
-    for _, b in ipairs(frame:GetChildren()) do
-        if b:IsA("TextButton") and b.Text:find(":") then
-            b.Text = b.Text:gsub(": on", ": off")
-            b.BackgroundColor3 = Color3.fromRGB(28, 38, 56)
-        end
-    end
-end)
-
 UIS.InputBegan:Connect(function(input, gpe)
-    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.F6 then
-        frame.Visible = not frame.Visible
+    if gpe then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        if input.KeyCode == Enum.KeyCode.F6 or input.KeyCode == Enum.KeyCode.Insert then
+            win.Visible = not win.Visible
+        end
     end
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
     flyPos, flyHum = nil, nil
     table.clear(flySavedParts)
-    trick.active = false
-    trick.hopAt = nil
-    restoreAssists()
+    spin.phase = "Idle"
+    spin.totalAngle = 0
+    spin.currentBody = nil
+    spin.attach = nil
+    spin.align = nil
+    if wheelie.active then stopWheelie() end
+
     if state.fly then
         task.wait(1)
         startFly()
