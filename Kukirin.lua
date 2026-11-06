@@ -47,6 +47,7 @@ local state = {
     deliveryCash = 0,
     deliveries = 0,
     deliveryStatus = "",
+    deliveryCycleStart = 0,
 }
 
 local function remote(path)
@@ -90,6 +91,35 @@ local function findSeat(ride)
     local s = hum and hum.SeatPart
     if s and s:IsA("VehicleSeat") then return s end
     return nil
+end
+
+-- Keeps the character rigidly attached to the vehicle while tricks / wheelie run,
+-- so a wild spin cannot throw the rider off.
+local seatLock = nil
+
+local function unlockSeat()
+    if seatLock then
+        pcall(function() seatLock:Destroy() end)
+    end
+    seatLock = nil
+end
+
+local function lockSeat(seat)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp or not seat or not seat.Parent then
+        unlockSeat()
+        return
+    end
+    if seatLock and seatLock.Parent and seatLock.Part0 == hrp and seatLock.Part1 == seat then
+        return
+    end
+    unlockSeat()
+    seatLock = Instance.new("WeldConstraint")
+    seatLock.Name = "PulsarSeatLock"
+    seatLock.Part0 = hrp
+    seatLock.Part1 = seat
+    seatLock.Parent = hrp
 end
 
 -- ============================================================
@@ -190,6 +220,9 @@ local function getSpinParts()
     local root = char:FindFirstChild("HumanoidRootPart")
     if not hum or not root or hum.Health <= 0 then return nil end
     local seat = hum.SeatPart
+    if not seat and seatLock and seatLock.Part1 and seatLock.Part1.Parent then
+        seat = seatLock.Part1
+    end
     local body = root
     local vehicle = nil
     if seat then
@@ -862,6 +895,7 @@ end
 -- PIZZA DELIVERY FARM
 -- ============================================================
 local DELIVERY_NPC = Vector3.new(1424.7, 58.6, -607.8)
+local DELIVERY_CYCLE = 20
 
 local function teleportTo(pos)
     if typeof(pos) ~= "Vector3" then return end
@@ -891,42 +925,111 @@ end
 local deliveryToken = {}
 getgenv().pulsarKukirinDeliveryToken = deliveryToken
 
+local function tweenTo(pos, duration)
+    if typeof(pos) ~= "Vector3" then return end
+    duration = math.max(0.5, duration or 1)
+    pcall(function() workspace:RequestStreamAroundAsync(pos) end)
+
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local seat = hum and hum.SeatPart
+    local ride = seat and seat:FindFirstAncestorOfClass("Model")
+
+    if ride then
+        local body = ride.PrimaryPart or seat
+        local pivot = ride:GetPivot()
+        local goal = CFrame.new(pos + Vector3.new(0, 5, 0)) * (pivot - pivot.Position)
+        local value = Instance.new("CFrameValue")
+        value.Value = pivot
+        local connection = value:GetPropertyChangedSignal("Value"):Connect(function()
+            if ride.Parent then
+                pcall(function() ride:PivotTo(value.Value) end)
+            end
+        end)
+
+        local wasAnchored = body and body.Anchored
+        if body then body.Anchored = true end
+
+        local tween = TweenService:Create(
+            value,
+            TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+            { Value = goal }
+        )
+        tween:Play()
+        tween.Completed:Wait()
+
+        if connection then connection:Disconnect() end
+        value:Destroy()
+
+        if body and body.Parent then
+            body.Anchored = wasAnchored
+            body.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            body.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+    elseif root then
+        local wasAnchored = root.Anchored
+        root.Anchored = true
+        local tween = TweenService:Create(
+            root,
+            TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+            { CFrame = CFrame.new(pos + Vector3.new(0, 3, 0)) }
+        )
+        tween:Play()
+        tween.Completed:Wait()
+        if root.Parent then
+            root.Anchored = wasAnchored
+            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+    end
+end
+
 local function deliveryLoop()
     while getgenv().pulsarKukirinDeliveryToken == deliveryToken do
         if state.delivery and FoodDelivery and FoodDelivery:FindFirstChild("Start") and FoodDelivery:FindFirstChild("Deliver") then
             local target = LocalPlayer:GetAttribute("DeliveryTarget")
 
             if typeof(target) ~= "Vector3" then
-                state.deliveryStatus = "heading to delivery NPC"
-                teleportTo(DELIVERY_NPC)
-                task.wait(0.7)
-
-                local ok, started, msg = pcall(function()
-                    return FoodDelivery.Start:InvokeServer()
-                end)
-
-                if ok and started then
-                    state.deliveryStatus = "picked up an order"
+                state.deliveryStatus = "tweening to delivery NPC"
+                tweenTo(DELIVERY_NPC, 2.5)
+                task.wait(0.2)
+                if not state.delivery then
+                    state.deliveryStatus = ""
                 else
-                    state.deliveryStatus = tostring(msg or "waiting for an order")
-                    task.wait(2.5)
+                    local ok, started, msg = pcall(function()
+                        return FoodDelivery.Start:InvokeServer()
+                    end)
+
+                    if ok and started then
+                        state.deliveryCycleStart = os.clock()
+                        state.deliveryStatus = "picked up an order"
+                    else
+                        state.deliveryStatus = tostring(msg or "waiting for an order")
+                        task.wait(1.5)
+                    end
                 end
             else
-                state.deliveryStatus = "driving to customer"
-                teleportTo(target + Vector3.new(0, 0, 4))
-                task.wait(0.5)
+                local cycleStart = state.deliveryCycleStart
+                if cycleStart == 0 then
+                    cycleStart = os.clock()
+                    state.deliveryCycleStart = cycleStart
+                end
 
-                local giveUp = os.clock() + 75
-                local lastTp = os.clock()
+                local elapsed = os.clock() - cycleStart
+                local travel = math.clamp(17.5 - elapsed, 2, 17.5)
+
+                state.deliveryStatus = "tweening to customer"
+                tweenTo(target + Vector3.new(0, 0, 4), travel)
+                state.deliveryStatus = "waiting for drop-off"
+
+                local targetTime = cycleStart + DELIVERY_CYCLE
+                local giveUp = math.max(targetTime, os.clock() + 5) + 18
 
                 while state.delivery
                     and getgenv().pulsarKukirinDeliveryToken == deliveryToken
                     and LocalPlayer:GetAttribute("DeliveryTarget") == target
                     and os.clock() < giveUp do
-                    if os.clock() - lastTp > 8 then
-                        teleportTo(target + Vector3.new(0, 0, 4))
-                        lastTp = os.clock()
-                    end
 
                     local ok, done, pay, _, tip = pcall(function()
                         return FoodDelivery.Deliver:InvokeServer()
@@ -937,18 +1040,30 @@ local function deliveryLoop()
                         state.deliveryCash = state.deliveryCash + earned
                         state.deliveries = state.deliveries + 1
                         state.deliveryStatus = string.format("delivered +$%d", earned)
+                        state.deliveryCycleStart = 0
                         break
                     end
 
-                    task.wait(1.5)
+                    if os.clock() >= targetTime then
+                        state.deliveryStatus = "waiting for server payout"
+                    end
+
+                    task.wait(0.75)
+                end
+
+                if state.delivery and LocalPlayer:GetAttribute("DeliveryTarget") == target then
+                    state.deliveryStatus = "deliver rejected, retrying"
+                    state.deliveryCycleStart = 0
+                    task.wait(0.5)
                 end
             end
         else
             state.deliveryStatus = ""
+            state.deliveryCycleStart = 0
             task.wait(0.5)
         end
 
-        task.wait(0.2)
+        task.wait(0.1)
     end
 end
 
@@ -1669,6 +1784,7 @@ end
 -- RESTORE
 -- ============================================================
 local function restoreAll()
+    unlockSeat()
     stopWheelie()
     stopSpin()
     stopFly()
@@ -1690,6 +1806,18 @@ RunService.Heartbeat:Connect(function(dt)
     pcall(function()
         local ride = currentRide()
         state.ride = ride
+
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local rideSeat = ride and findSeat(ride) or (hum and hum.SeatPart)
+        if not rideSeat and seatLock and seatLock.Part1 and seatLock.Part1.Parent then
+            rideSeat = seatLock.Part1
+        end
+        if (state.wheelie or state.tricks) and rideSeat and not state.fly then
+            lockSeat(rideSeat)
+        else
+            unlockSeat()
+        end
 
         -- wheelie
         if state.wheelie and ride and not state.tricks and not state.fly then
@@ -1778,6 +1906,7 @@ UIS.InputBegan:Connect(function(input, gpe)
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
+    unlockSeat()
     flyPos, flyHum = nil, nil
     table.clear(flySavedParts)
     spin.phase = "Idle"
